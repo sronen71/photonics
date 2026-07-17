@@ -8,14 +8,36 @@ The azimuthal coordinate theta is periodic on [0, 2*pi).  The pump F,
 detuning alpha, and dispersion beta are constant.
 """
 
-import argparse
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from config_loader import (
+    PHYSICS_KEYS,
+    ConfigurationError,
+    config_parser,
+    load_section,
+)
+
 
 RESULTS_DIRECTORY = Path("results")
+CONFIGURATION_KEYS = {
+    "spatial_points",
+    "final_time",
+    "dt",
+    "initial_noise",
+    "snapshots",
+    "seed",
+    "initial_shape",
+    "operation_mode",
+    "scan_alpha_start",
+    "scan_time",
+}
+INITIAL_SHAPES = {"empty", "soliton"}
+OPERATION_MODES = {"direct", "scan"}
 
 
 def uniform_states(alpha: float, forcing: complex):
@@ -69,24 +91,27 @@ def solve_lle(
     alpha: float,
     forcing: complex,
     beta: float,
-    points: int,
+    spatial_points: int,
     final_time: float,
     time_step: float,
-    noise: float,
+    initial_noise: float,
     snapshots: int,
     seed: int,
     initial_background: complex = 0.0j,
     alpha_schedule=None,
-    forcing_schedule=None,
 ):
     """Integrate the spatial equation using Strang split stepping."""
-    if points < 8 or final_time <= 0.0 or time_step <= 0.0:
-        raise ValueError("points, final time, and time step must be positive")
+    if spatial_points < 8 or final_time <= 0.0 or time_step <= 0.0:
+        raise ValueError(
+            "spatial points, final time, and time step must be positive"
+        )
 
-    theta = np.linspace(0.0, 2.0 * np.pi, points, endpoint=False)
-    angular_step = 2.0 * np.pi / points
+    theta = np.linspace(0.0, 2.0 * np.pi, spatial_points, endpoint=False)
+    angular_step = 2.0 * np.pi / spatial_points
     # Integer azimuthal mode numbers for a 2*pi-periodic ring.
-    mode_number = 2.0 * np.pi * np.fft.fftfreq(points, d=angular_step)
+    mode_number = 2.0 * np.pi * np.fft.fftfreq(
+        spatial_points, d=angular_step
+    )
 
     # Fourier representation of -(1+i*alpha)A - i*(beta/2)A_theta,theta.
     linear_operator = -(1.0 + 1j * alpha) + 0.5j * beta * mode_number**2
@@ -96,8 +121,9 @@ def solve_lle(
     # Seed all spatial modes with small complex noise.  The time-dependent
     # executable uses the default empty-cavity background; stationary solvers
     # may supply a different branch as their initial guess.
-    amplitude = initial_background + noise * (
-        rng.standard_normal(points) + 1j * rng.standard_normal(points)
+    amplitude = initial_background + initial_noise * (
+        rng.standard_normal(spatial_points)
+        + 1j * rng.standard_normal(spatial_points)
     )
 
     number_of_steps = int(np.ceil(final_time / time_step))
@@ -118,17 +144,12 @@ def solve_lle(
         else:
             propagator = half_linear_step
 
-        step_forcing = (
-            forcing_schedule(index * time_step + 0.5 * step)
-            if forcing_schedule is not None
-            else forcing
-        )
         amplitude = np.fft.ifft(propagator * np.fft.fft(amplitude))
-        amplitude = nonlinear_step(amplitude, step, step_forcing)
+        amplitude = nonlinear_step(amplitude, step, forcing)
         amplitude = np.fft.ifft(propagator * np.fft.fft(amplitude))
 
         if not np.all(np.isfinite(amplitude)):
-            raise RuntimeError("solution diverged; reduce --dt")
+            raise RuntimeError("solution diverged; reduce lle.dt in the configuration")
 
         if (index + 1) % save_every == 0 or index == number_of_steps - 1:
             saved_times.append(min((index + 1) * time_step, final_time))
@@ -208,158 +229,74 @@ def save_figure(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--alpha", type=float, default=2.0)
-    parser.add_argument("--f-real", type=float, default=1.8)
-    parser.add_argument("--f-imag", type=float, default=0.0)
-    parser.add_argument("--beta", type=float, default=0.0)
-    parser.add_argument("--points", type=int, default=512)
-    parser.add_argument("--final-time", type=float, default=50.0)
-    parser.add_argument("--dt", type=float, default=0.005)
-    parser.add_argument("--noise", type=float, default=1e-3)
-    parser.add_argument("--snapshots", type=int, default=300)
-    parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument(
-        "--initial-guess",
-        choices=("empty", "pattern", "soliton", "scan", "cat", "seeded"),
-        default="empty",
-        help="Empty, pattern, one pulse, scan, CAT, or one-FSR parametric seeding",
-    )
-    parser.add_argument(
-        "--scan-alpha-start",
-        type=float,
-        default=-2.0,
-        help="Initial detuning for --initial-guess scan",
-    )
-    parser.add_argument(
-        "--scan-time",
-        type=float,
-        default=30.0,
-        help="Time over which detuning reaches the final --alpha",
-    )
-    parser.add_argument(
-        "--cat-dwell-time",
-        type=float,
-        default=20.0,
-        help="Initial Turing-roll dwell time for the CAT protocol",
-    )
-    parser.add_argument(
-        "--cat-sweep-time",
-        type=float,
-        default=15.0,
-        help="Coordinated detuning/pump sweep time for the CAT protocol",
-    )
-    parser.add_argument("--seed-power", type=float, default=0.3)
-    parser.add_argument("--seed-mode", type=int, default=1)
-    parser.add_argument("--seed-phase", type=float, default=0.0)
-    parser.add_argument("--seed-scan-time", type=float, default=50.0)
-    parser.add_argument("--seed-on-time", type=float, default=150.0)
-    parser.add_argument("--seed-ramp-time", type=float, default=0.0)
-    arguments = parser.parse_args()
+    parser = config_parser(__doc__)
+    command_line = parser.parse_args()
+    try:
+        physics = load_section(command_line.config, "physics", PHYSICS_KEYS)
+        arguments = load_section(command_line.config, "lle", CONFIGURATION_KEYS)
+        for name in PHYSICS_KEYS:
+            setattr(arguments, name, float(getattr(physics, name)))
+        for name in (
+            "final_time",
+            "dt",
+            "initial_noise",
+            "scan_alpha_start",
+            "scan_time",
+        ):
+            setattr(arguments, name, float(getattr(arguments, name)))
+        for name in ("spatial_points", "snapshots", "seed"):
+            setattr(arguments, name, int(getattr(arguments, name)))
+    except (ConfigurationError, TypeError, ValueError) as error:
+        parser.error(str(error))
+    if arguments.initial_shape not in INITIAL_SHAPES:
+        parser.error(
+            "lle.initial_shape must be one of: "
+            + ", ".join(sorted(INITIAL_SHAPES))
+        )
+    if arguments.operation_mode not in OPERATION_MODES:
+        parser.error(
+            "lle.operation_mode must be one of: "
+            + ", ".join(sorted(OPERATION_MODES))
+        )
+    if arguments.initial_noise < 0.0 or arguments.snapshots < 1:
+        parser.error(
+            "lle.initial_noise must be nonnegative and snapshots must be positive"
+        )
 
     print("Solving spatial equation...", flush=True)
     forcing = complex(arguments.f_real, arguments.f_imag)
-    theta_grid = np.linspace(0.0, 2.0 * np.pi, arguments.points, endpoint=False)
+    theta_grid = np.linspace(
+        0.0, 2.0 * np.pi, arguments.spatial_points, endpoint=False
+    )
     alpha_schedule = None
-    forcing_schedule = None
     alpha_start = None
-    if arguments.initial_guess == "soliton":
+    if arguments.initial_shape == "soliton":
         initial_background = single_soliton_seed(
             theta_grid, arguments.alpha, forcing, arguments.beta
         )
-    elif arguments.initial_guess == "pattern":
-        initial_background = uniform_states(arguments.alpha, forcing)[-1]
-    elif arguments.initial_guess == "scan":
-        if arguments.scan_time <= 0.0:
-            parser.error("--scan-time must be positive")
+    else:
         initial_background = 0.0j
+
+    if arguments.operation_mode == "scan":
+        if arguments.scan_time <= 0.0:
+            parser.error("lle.scan_time must be positive")
         alpha_start = arguments.scan_alpha_start
 
         def alpha_schedule(time):
             fraction = min(max(time / arguments.scan_time, 0.0), 1.0)
             return alpha_start + fraction * (arguments.alpha - alpha_start)
-    elif arguments.initial_guess == "cat":
-        if arguments.cat_dwell_time < 0.0 or arguments.cat_sweep_time <= 0.0:
-            parser.error("CAT dwell must be nonnegative and sweep time positive")
-        alpha_start = 0.0
-        initial_background = 0.0j
-        sweep_start = arguments.cat_dwell_time
-        sweep_end = sweep_start + arguments.cat_sweep_time
-        if sweep_end >= arguments.final_time:
-            parser.error("CAT dwell + sweep time must be less than --final-time")
-
-        def cat_power(detuning):
-            return 4.15 * np.exp(-3.09 * detuning) + 2.15 * np.exp(0.196 * detuning)
-
-        power_offset = abs(forcing) ** 2 - cat_power(arguments.alpha)
-        if cat_power(0.0) + power_offset <= 0.0:
-            parser.error("requested endpoint gives nonpositive pump power on CAT")
-        pump_phase = np.angle(forcing)
-
-        def alpha_schedule(time):
-            if time <= sweep_start:
-                return 0.0
-            fraction = min(max((time - sweep_start) / arguments.cat_sweep_time, 0.0), 1.0)
-            return fraction * arguments.alpha
-
-        def forcing_schedule(time):
-            detuning = alpha_schedule(time)
-            power = cat_power(detuning) + power_offset
-            return np.sqrt(max(power, 0.0)) * np.exp(1j * pump_phase)
-    elif arguments.initial_guess == "seeded":
-        if (
-            arguments.seed_power < 0.0
-            or arguments.seed_scan_time <= 0.0
-            or arguments.seed_on_time < arguments.seed_scan_time
-            or arguments.seed_ramp_time < 0.0
-        ):
-            parser.error("invalid parametric-seed timing or power")
-        if arguments.seed_on_time + arguments.seed_ramp_time >= arguments.final_time:
-            parser.error("seed turn-on and ramp must finish before --final-time")
-        initial_background = 0.0j
-        alpha_start = arguments.scan_alpha_start
-        seed_profile = (
-            np.sqrt(arguments.seed_power)
-            * np.exp(
-                1j
-                * (
-                    arguments.seed_mode * theta_grid
-                    + arguments.seed_phase
-                )
-            )
-        )
-
-        def alpha_schedule(time):
-            fraction = min(max(time / arguments.seed_scan_time, 0.0), 1.0)
-            return alpha_start + fraction * (arguments.alpha - alpha_start)
-
-        def forcing_schedule(time):
-            if arguments.seed_ramp_time == 0.0:
-                seed_fraction = float(time >= arguments.seed_on_time)
-            else:
-                seed_fraction = min(
-                    max(
-                        (time - arguments.seed_on_time) / arguments.seed_ramp_time,
-                        0.0,
-                    ),
-                    1.0,
-                )
-            return forcing + seed_fraction * seed_profile
-    else:
-        initial_background = 0.0j
     theta, times, fields = solve_lle(
         alpha=arguments.alpha,
         forcing=forcing,
         beta=arguments.beta,
-        points=arguments.points,
+        spatial_points=arguments.spatial_points,
         final_time=arguments.final_time,
         time_step=arguments.dt,
-        noise=arguments.noise,
+        initial_noise=arguments.initial_noise,
         snapshots=arguments.snapshots,
         seed=arguments.seed,
         initial_background=initial_background,
         alpha_schedule=alpha_schedule,
-        forcing_schedule=forcing_schedule,
     )
     print("Saving figure...", flush=True)
     save_figure(

@@ -1,0 +1,49 @@
+uniform:
+  alpha_grid:
+    start: 0.0
+    end: 4.0
+    increment: 1.0
+  power_grid:
+    start: 1.0
+    end: 12.0
+    increment: 1.0
+  minimum_alpha: -2.0
+  maximum_alpha: 6.0
+
+physics:
+  alpha: 4.0
+  f_real: 2.0
+  f_imag: 0.0
+  beta: -0.02
+
+lle:
+  # Common numerical settings used by every operation mode.
+  spatial_points: 512
+  final_time: 50.0
+  dt: 0.005
+  initial_noise: 0.001
+  snapshots: 300
+  seed: 7
+
+  # Initial field shape: empty or soliton.
+  initial_shape: empty
+
+  # Operation mode: direct or scan. This is independent of the initial field
+  # shape selected above.
+  # direct: Holds the shared physics parameters for the entire run.
+  # scan: Uses scan_alpha_start and scan_time to ramp alpha.
+  operation_mode: scan
+
+  # scan mode.
+  scan_alpha_start: 0.0
+  scan_time: 30.0
+
+steady:
+  spatial_points: 512
+  # Time-dependent warm-up used to prepare the Newton--Krylov initial guess.
+  initial_guess_time: 50.0
+  dt: 0.005
+  initial_noise: 0.001
+  seed: 7
+  tolerance: 1.0e-9
+  max_iterations: 1000

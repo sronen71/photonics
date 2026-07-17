@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find a nonuniform stationary Lugiato--Lefever state on a ring.
+"""Find a stationary Lugiato--Lefever state on a ring.
 
 The stationary equation is
 
@@ -9,18 +9,33 @@ The stationary equation is
 with A(theta + 2*pi) = A(theta).
 """
 
-import argparse
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import NoConvergence, newton_krylov
 
+from config_loader import (
+    PHYSICS_KEYS,
+    ConfigurationError,
+    config_parser,
+    load_section,
+)
 from lle_solver import solve_lle
 
 
 RESULTS_DIRECTORY = Path("results")
-INITIAL_GUESS_TIME = 50.0
+CONFIGURATION_KEYS = {
+    "spatial_points",
+    "initial_guess_time",
+    "dt",
+    "initial_noise",
+    "seed",
+    "tolerance",
+    "max_iterations",
+}
 
 
 def uniform_states(alpha: float, forcing: complex):
@@ -78,15 +93,19 @@ def pack(amplitude):
 
 def unpack(vector):
     """Convert a real solver vector back into a complex field."""
-    points = vector.size // 2
-    return vector[:points] + 1j * vector[points:]
+    spatial_points = vector.size // 2
+    return vector[:spatial_points] + 1j * vector[spatial_points:]
 
 
-def solve_stationary(initial_guess, alpha, forcing, beta, tolerance, iterations):
+def solve_stationary(
+    initial_guess, alpha, forcing, beta, tolerance, max_iterations
+):
     """Refine an initial field with a matrix-free Newton--Krylov solver."""
-    points = initial_guess.size
-    angular_step = 2.0 * np.pi / points
-    mode_number = 2.0 * np.pi * np.fft.fftfreq(points, d=angular_step)
+    spatial_points = initial_guess.size
+    angular_step = 2.0 * np.pi / spatial_points
+    mode_number = 2.0 * np.pi * np.fft.fftfreq(
+        spatial_points, d=angular_step
+    )
 
     def real_residual(vector):
         amplitude = unpack(vector)
@@ -94,24 +113,45 @@ def solve_stationary(initial_guess, alpha, forcing, beta, tolerance, iterations)
             stationary_residual(amplitude, alpha, forcing, beta, mode_number)
         )
 
+    iteration_count = 0
+
+    def count_iteration(_vector, _residual):
+        nonlocal iteration_count
+        iteration_count += 1
+
     try:
         solution_vector = newton_krylov(
             real_residual,
             pack(initial_guess),
-            f_tol=tolerance,
-            maxiter=iterations,
+            f_tol=tolerance / np.sqrt(2.0),
+            maxiter=max_iterations,
+            callback=count_iteration,
             verbose=False,
         )
     except NoConvergence as error:
-        # SciPy includes the full field in this exception.  Keep the best
-        # iterate for diagnostics, but never print the exception or solution.
-        solution_vector = error.args[0]
+        # SciPy includes the full field in this exception. Report only its
+        # residual so a failed solve does not print the complete solution.
+        best_solution = unpack(np.asarray(error.args[0]))
+        best_residual = stationary_residual(
+            best_solution, alpha, forcing, beta, mode_number
+        )
+        maximum_residual = float(np.max(np.abs(best_residual)))
+        raise RuntimeError(
+            "stationary Newton--Krylov solve did not converge after "
+            f"{iteration_count} iterations; maximum residual={maximum_residual:.3e}"
+        ) from None
     solution = unpack(np.asarray(solution_vector))
     residual = stationary_residual(solution, alpha, forcing, beta, mode_number)
-    return solution, float(np.max(np.abs(residual)))
+    maximum_residual = float(np.max(np.abs(residual)))
+    if maximum_residual > tolerance:
+        raise RuntimeError(
+            "stationary Newton--Krylov solve returned without satisfying "
+            f"the residual tolerance; maximum residual={maximum_residual:.3e}"
+        )
+    return solution, maximum_residual, iteration_count
 
 
-def save_results(theta, amplitude, alpha, forcing, beta, residual):
+def save_results(theta, amplitude, alpha, forcing, beta, residual, iterations):
     """Save the stationary field, magnitude profile, and mode amplitudes."""
     RESULTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
     intensity = np.abs(amplitude) ** 2
@@ -124,7 +164,7 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual):
     )
 
     np.savez(
-        RESULTS_DIRECTORY / "nonuniform_steady_state.npz",
+        RESULTS_DIRECTORY / "steady_solution.npz",
         theta=theta,
         amplitude=amplitude,
         magnitude=magnitude,
@@ -135,6 +175,7 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual):
         forcing=forcing,
         beta=beta,
         maximum_residual=residual,
+        newton_iterations=iterations,
     )
 
     figure = plt.figure(figsize=(11, 9))
@@ -183,7 +224,7 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual):
     )
     figure.tight_layout()
     figure.savefig(
-        RESULTS_DIRECTORY / "nonuniform_steady_state.png",
+        RESULTS_DIRECTORY / "steady_solution.png",
         dpi=300,
         bbox_inches="tight",
     )
@@ -191,55 +232,71 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--alpha", type=float, default=2.0)
-    parser.add_argument("--f-real", type=float, default=1.8)
-    parser.add_argument("--f-imag", type=float, default=0.0)
-    parser.add_argument("--beta", type=float, default=0.0)
-    parser.add_argument("--points", type=int, default=512)
-    parser.add_argument("--dt", type=float, default=0.005)
-    parser.add_argument("--noise", type=float, default=1e-3)
-    parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--tolerance", type=float, default=1e-9)
-    parser.add_argument("--iterations", type=int, default=100)
-    parser.add_argument(
-        "--initial-guess",
-        choices=("pattern", "soliton"),
-        default="pattern",
-        help="Upper-branch noise for a pattern, or one localized pulse",
-    )
-    arguments = parser.parse_args()
+    parser = config_parser(__doc__)
+    command_line = parser.parse_args()
+    try:
+        physics = load_section(command_line.config, "physics", PHYSICS_KEYS)
+        arguments = load_section(
+            command_line.config, "steady", CONFIGURATION_KEYS
+        )
+        for name in PHYSICS_KEYS:
+            setattr(arguments, name, float(getattr(physics, name)))
+        for name in (
+            "dt",
+            "initial_noise",
+            "tolerance",
+            "initial_guess_time",
+        ):
+            setattr(arguments, name, float(getattr(arguments, name)))
+        for name in ("spatial_points", "seed", "max_iterations"):
+            setattr(arguments, name, int(getattr(arguments, name)))
+    except (ConfigurationError, TypeError, ValueError) as error:
+        parser.error(str(error))
+    if (
+        arguments.initial_noise < 0.0
+        or arguments.initial_guess_time <= 0.0
+        or arguments.tolerance <= 0.0
+        or arguments.max_iterations < 1
+    ):
+        parser.error(
+            "steady initial_noise must be nonnegative; initial_guess_time, "
+            "tolerance, and max_iterations must be positive"
+        )
 
     forcing = complex(arguments.f_real, arguments.f_imag)
-    print("Generating nonuniform initial guess...", flush=True)
-    theta_grid = np.linspace(0.0, 2.0 * np.pi, arguments.points, endpoint=False)
-    if arguments.initial_guess == "soliton":
-        initial_background = single_soliton_seed(
-            theta_grid, arguments.alpha, forcing, arguments.beta
-        )
-    else:
-        initial_background = uniform_states(arguments.alpha, forcing)[-1]
+    print("Generating stationary initial guess...", flush=True)
+    theta_grid = np.linspace(
+        0.0, 2.0 * np.pi, arguments.spatial_points, endpoint=False
+    )
+    initial_background = single_soliton_seed(
+        theta_grid, arguments.alpha, forcing, arguments.beta
+    )
     theta, _, fields = solve_lle(
         alpha=arguments.alpha,
         forcing=forcing,
         beta=arguments.beta,
-        points=arguments.points,
-        final_time=INITIAL_GUESS_TIME,
+        spatial_points=arguments.spatial_points,
+        final_time=arguments.initial_guess_time,
         time_step=arguments.dt,
-        noise=arguments.noise,
+        initial_noise=arguments.initial_noise,
         snapshots=2,
         seed=arguments.seed,
         initial_background=initial_background,
     )
 
     print("Solving stationary equation...", flush=True)
-    amplitude, residual = solve_stationary(
+    amplitude, residual, iterations = solve_stationary(
         fields[-1],
         arguments.alpha,
         forcing,
         arguments.beta,
         arguments.tolerance,
-        arguments.iterations,
+        arguments.max_iterations,
+    )
+    print(
+        f"Converged in {iterations} Newton--Krylov iterations; "
+        f"maximum residual={residual:.3e}",
+        flush=True,
     )
 
     print("Saving results...", flush=True)
@@ -250,6 +307,7 @@ def main():
         forcing,
         arguments.beta,
         residual,
+        iterations,
     )
     print("Results saved.", flush=True)
 

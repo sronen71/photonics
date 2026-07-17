@@ -13,30 +13,37 @@ python3 -m pip install -r requirements.txt
 
 ## Examples
 
-Plot the uniform steady-state response curves:
+Edit `config.yaml`, then run a solver without parameter flags. The `physics`
+section supplies the shared `alpha`, pump, and `beta` values used by both the
+`lle` and `steady` solvers; their numerical settings remain in separate
+sections.
+
+Plot the uniform response curves (`uniform` section):
 
 ```bash
-python3 steady_state_solver.py
+python3 uniform_solver.py
 ```
 
-Integrate the time-dependent LLE from a noisy uniform state:
+Integrate the time-dependent LLE (`lle` section):
 
 ```bash
-python3 lle_solver.py --initial-guess pattern --alpha 2 --f-real 1.8 --beta -0.02
+python3 lle_solver.py
 ```
 
-Find a stationary nonuniform pattern:
+Find a stationary bright soliton (`steady` section):
 
 ```bash
-python3 nonuniform_steady_solver.py --initial-guess pattern --alpha 2 --f-real 1.8 --beta -0.02
+python3 steady_solver.py
 ```
 
-Find a stationary bright soliton:
+An alternate common configuration file can be selected with the only supported
+parameter flag:
 
 ```bash
-python3 nonuniform_steady_solver.py --initial-guess soliton --alpha 4 --f-real 2 --beta -0.02
+python3 steady_solver.py --config soliton.yaml
 ```
 
-Bright-soliton seeds require anomalous dispersion (`--beta < 0`). Run
-`lle_solver.py` or `nonuniform_steady_solver.py` with `--help` to see all
-available parameters.
+The default physics and initial shape target a dissipative Kerr soliton (DKS).
+In the LLE section, `initial_shape` selects `empty` or `soliton` independently
+of the `direct` or `scan` `operation_mode`. The steady solver always starts
+from the soliton seed before Newton--Krylov refinement.
