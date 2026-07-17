@@ -8,7 +8,7 @@ import yaml
 
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
-PHYSICS_KEYS = {"alpha", "f_real", "f_imag", "beta"}
+PHYSICS_KEYS = {"alpha", "f_real", "beta"}
 
 
 class ConfigurationError(ValueError):

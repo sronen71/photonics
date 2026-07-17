@@ -3,6 +3,11 @@
 Small Python solvers for the normalized Lugiato--Lefever equation (LLE) on a
 periodic ring. Generated figures and data are written to `results/`.
 
+The time-dependent solver uses a pyLLE-style iterative split-step Fourier
+method: an explicit pump update, spectral linear half-steps, and an exponential
+Kerr step refined by fixed-point iteration. The `lle` section sets
+`split_step_tolerance` and `split_step_max_iterations` for that inner solve.
+
 ## Setup
 
 ```bash

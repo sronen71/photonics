@@ -28,6 +28,8 @@ CONFIGURATION_KEYS = {
     "spatial_points",
     "final_time",
     "dt",
+    "split_step_tolerance",
+    "split_step_max_iterations",
     "initial_noise",
     "snapshots",
     "seed",
@@ -75,16 +77,45 @@ def single_soliton_seed(theta, alpha, forcing, beta):
     return background + pulse
 
 
-def nonlinear_step(amplitude: np.ndarray, step: float, forcing: complex) -> np.ndarray:
-    """RK4 step for the local Kerr nonlinearity and pump."""
-    def derivative(field):
-        return 1j * np.abs(field) ** 2 * field + forcing
+def iterative_split_step(
+    amplitude,
+    step,
+    forcing,
+    half_linear_propagator,
+    tolerance,
+    max_iterations,
+):
+    """Advance one pyLLE-style symmetric split step."""
+    # Apply the constant drive explicitly, as in pyLLE's SSFM half-step.
+    driven_field = amplitude + step * forcing
+    first_linear_half = np.fft.ifft(
+        half_linear_propagator * np.fft.fft(driven_field)
+    )
+    initial_nonlinearity = 1j * np.abs(driven_field) ** 2
+    iterate = driven_field
 
-    k1 = derivative(amplitude)
-    k2 = derivative(amplitude + 0.5 * step * k1)
-    k3 = derivative(amplitude + 0.5 * step * k2)
-    k4 = derivative(amplitude + step * k3)
-    return amplitude + step * (k1 + 2*k2 + 2*k3 + k4) / 6.0
+    for _ in range(max_iterations):
+        final_nonlinearity = 1j * np.abs(iterate) ** 2
+        averaged_nonlinearity = 0.5 * (
+            initial_nonlinearity + final_nonlinearity
+        )
+        nonlinear_field = first_linear_half * np.exp(
+            step * averaged_nonlinearity
+        )
+        updated = np.fft.ifft(
+            half_linear_propagator * np.fft.fft(nonlinear_field)
+        )
+
+        scale = max(np.linalg.norm(iterate), np.finfo(float).tiny)
+        relative_change = np.linalg.norm(updated - iterate) / scale
+        if relative_change < tolerance:
+            return updated
+        iterate = updated
+
+    raise RuntimeError(
+        "iterative split step did not converge; reduce lle.dt in the "
+        "configuration"
+    )
 
 
 def solve_lle(
@@ -99,11 +130,20 @@ def solve_lle(
     seed: int,
     initial_background: complex = 0.0j,
     alpha_schedule=None,
+    split_step_tolerance: float = 1.0e-2,
+    split_step_max_iterations: int = 10,
 ):
-    """Integrate the spatial equation using Strang split stepping."""
-    if spatial_points < 8 or final_time <= 0.0 or time_step <= 0.0:
+    """Integrate using an iterative symmetric split-step Fourier method."""
+    if (
+        spatial_points < 8
+        or final_time <= 0.0
+        or time_step <= 0.0
+        or split_step_tolerance <= 0.0
+        or split_step_max_iterations < 1
+    ):
         raise ValueError(
-            "spatial points, final time, and time step must be positive"
+            "spatial points, times, and split-step convergence settings "
+            "must be positive"
         )
 
     theta = np.linspace(0.0, 2.0 * np.pi, spatial_points, endpoint=False)
@@ -144,9 +184,14 @@ def solve_lle(
         else:
             propagator = half_linear_step
 
-        amplitude = np.fft.ifft(propagator * np.fft.fft(amplitude))
-        amplitude = nonlinear_step(amplitude, step, forcing)
-        amplitude = np.fft.ifft(propagator * np.fft.fft(amplitude))
+        amplitude = iterative_split_step(
+            amplitude,
+            step,
+            forcing,
+            propagator,
+            split_step_tolerance,
+            split_step_max_iterations,
+        )
 
         if not np.all(np.isfinite(amplitude)):
             raise RuntimeError("solution diverged; reduce lle.dt in the configuration")
@@ -214,7 +259,7 @@ def save_figure(
         else rf"$\alpha={alpha:g}$"
     )
     figure.suptitle(
-        rf"Ring LLE: {alpha_text}, $F={forcing.real:g}{forcing.imag:+g}i$, "
+        rf"Ring LLE: {alpha_text}, $F={forcing.real:g}$, "
         rf"$\beta={beta:g}$",
         fontsize=14,
     )
@@ -239,12 +284,18 @@ def main() -> None:
         for name in (
             "final_time",
             "dt",
+            "split_step_tolerance",
             "initial_noise",
             "scan_alpha_start",
             "scan_time",
         ):
             setattr(arguments, name, float(getattr(arguments, name)))
-        for name in ("spatial_points", "snapshots", "seed"):
+        for name in (
+            "spatial_points",
+            "split_step_max_iterations",
+            "snapshots",
+            "seed",
+        ):
             setattr(arguments, name, int(getattr(arguments, name)))
     except (ConfigurationError, TypeError, ValueError) as error:
         parser.error(str(error))
@@ -258,13 +309,19 @@ def main() -> None:
             "lle.operation_mode must be one of: "
             + ", ".join(sorted(OPERATION_MODES))
         )
-    if arguments.initial_noise < 0.0 or arguments.snapshots < 1:
+    if (
+        arguments.initial_noise < 0.0
+        or arguments.split_step_tolerance <= 0.0
+        or arguments.split_step_max_iterations < 1
+        or arguments.snapshots < 1
+    ):
         parser.error(
-            "lle.initial_noise must be nonnegative and snapshots must be positive"
+            "lle.initial_noise must be nonnegative; split-step convergence "
+            "settings and snapshots must be positive"
         )
 
     print("Solving spatial equation...", flush=True)
-    forcing = complex(arguments.f_real, arguments.f_imag)
+    forcing = complex(arguments.f_real)
     theta_grid = np.linspace(
         0.0, 2.0 * np.pi, arguments.spatial_points, endpoint=False
     )
@@ -297,6 +354,8 @@ def main() -> None:
         seed=arguments.seed,
         initial_background=initial_background,
         alpha_schedule=alpha_schedule,
+        split_step_tolerance=arguments.split_step_tolerance,
+        split_step_max_iterations=arguments.split_step_max_iterations,
     )
     print("Saving figure...", flush=True)
     save_figure(

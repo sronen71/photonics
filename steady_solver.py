@@ -23,16 +23,11 @@ from config_loader import (
     config_parser,
     load_section,
 )
-from lle_solver import solve_lle
 
 
 RESULTS_DIRECTORY = Path("results")
 CONFIGURATION_KEYS = {
     "spatial_points",
-    "initial_guess_time",
-    "dt",
-    "initial_noise",
-    "seed",
     "tolerance",
     "max_iterations",
 }
@@ -218,7 +213,7 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual, iterations):
     spectrum_axis.grid(alpha=0.25)
 
     figure.suptitle(
-        rf"$\alpha={alpha:g}$, $F={forcing.real:g}{forcing.imag:+g}i$, "
+        rf"$\alpha={alpha:g}$, $F={forcing.real:g}$, "
         rf"$\beta={beta:g}$",
         fontsize=13,
     )
@@ -241,52 +236,33 @@ def main():
         )
         for name in PHYSICS_KEYS:
             setattr(arguments, name, float(getattr(physics, name)))
-        for name in (
-            "dt",
-            "initial_noise",
-            "tolerance",
-            "initial_guess_time",
-        ):
-            setattr(arguments, name, float(getattr(arguments, name)))
-        for name in ("spatial_points", "seed", "max_iterations"):
+        arguments.tolerance = float(arguments.tolerance)
+        for name in ("spatial_points", "max_iterations"):
             setattr(arguments, name, int(getattr(arguments, name)))
     except (ConfigurationError, TypeError, ValueError) as error:
         parser.error(str(error))
     if (
-        arguments.initial_noise < 0.0
-        or arguments.initial_guess_time <= 0.0
+        arguments.spatial_points < 8
         or arguments.tolerance <= 0.0
         or arguments.max_iterations < 1
     ):
         parser.error(
-            "steady initial_noise must be nonnegative; initial_guess_time, "
-            "tolerance, and max_iterations must be positive"
+            "steady.spatial_points must be at least 8; tolerance and "
+            "max_iterations must be positive"
         )
 
-    forcing = complex(arguments.f_real, arguments.f_imag)
+    forcing = complex(arguments.f_real)
     print("Generating stationary initial guess...", flush=True)
     theta_grid = np.linspace(
         0.0, 2.0 * np.pi, arguments.spatial_points, endpoint=False
     )
-    initial_background = single_soliton_seed(
+    initial_guess = single_soliton_seed(
         theta_grid, arguments.alpha, forcing, arguments.beta
-    )
-    theta, _, fields = solve_lle(
-        alpha=arguments.alpha,
-        forcing=forcing,
-        beta=arguments.beta,
-        spatial_points=arguments.spatial_points,
-        final_time=arguments.initial_guess_time,
-        time_step=arguments.dt,
-        initial_noise=arguments.initial_noise,
-        snapshots=2,
-        seed=arguments.seed,
-        initial_background=initial_background,
     )
 
     print("Solving stationary equation...", flush=True)
     amplitude, residual, iterations = solve_stationary(
-        fields[-1],
+        initial_guess,
         arguments.alpha,
         forcing,
         arguments.beta,
@@ -301,7 +277,7 @@ def main():
 
     print("Saving results...", flush=True)
     save_results(
-        theta,
+        theta_grid,
         amplitude,
         arguments.alpha,
         forcing,

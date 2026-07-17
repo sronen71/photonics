@@ -13,7 +13,6 @@ uniform:
 physics:
   alpha: 4.0
   f_real: 2.0
-  f_imag: 0.0
   beta: -0.02
 
 lle:
@@ -21,6 +20,9 @@ lle:
   spatial_points: 512
   final_time: 50.0
   dt: 0.005
+  # Fixed-point convergence within each split-step time step (pyLLE-like).
+  split_step_tolerance: 0.01
+  split_step_max_iterations: 10
   initial_noise: 0.001
   snapshots: 300
   seed: 7
@@ -40,10 +42,5 @@ lle:
 
 steady:
   spatial_points: 512
-  # Time-dependent warm-up used to prepare the Newton--Krylov initial guess.
-  initial_guess_time: 50.0
-  dt: 0.005
-  initial_noise: 0.001
-  seed: 7
   tolerance: 1.0e-9
   max_iterations: 1000
