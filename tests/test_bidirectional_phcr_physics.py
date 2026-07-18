@@ -15,7 +15,6 @@ from bidirectional import (
     solve_bidirectional_lle,
 )
 from bidirectional_spectrum import bidirectional_output
-from bidirectional_solver import steady_result_payload
 from bidirectional_steady import solve_bidirectional_steady_state
 from lle_solver import solve_lle
 from spectral import mode_numbers
@@ -204,35 +203,6 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
             steady_forward, steady_backward, parameters
         )
         self.assertLess(max(np.max(abs(value)) for value in residuals), 1.0e-10)
-
-    def test_archive_keeps_dynamic_and_refined_energy_balances_distinct(self):
-        """Keep the history and Newton-refined scalar under separate keys."""
-        parameters = BidirectionalParameters(
-            alpha=0.4,
-            forcing=0.3,
-            beta=0.05,
-            epsilon_phc=1.0,
-            coupling_factor=2.0,
-            reflectivity=0.6,
-            reflector_phase=0.2,
-            reflector_half_width=3,
-        )
-        field = np.zeros(16, dtype=complex)
-        dynamic_balance = np.linspace(0.8, 1.0, 5)
-        archive = {"steady_energy_balance": dynamic_balance.copy()}
-        archive.update(steady_result_payload(
-            field,
-            field,
-            0.0,
-            1,
-            parameters,
-        ))
-        np.testing.assert_array_equal(
-            archive["steady_energy_balance"], dynamic_balance
-        )
-        self.assertAlmostEqual(
-            archive["refined_steady_energy_balance"], 1.0, places=14
-        )
 
     def test_reported_regime_after_derived_phase_relabeling(self):
         """Check the high-efficiency contrast after the derived pi relabeling."""

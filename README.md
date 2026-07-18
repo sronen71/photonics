@@ -320,7 +320,7 @@ ports, and refines the final state with the even-dispersion Newton--Krylov
 solver. It produces a stable, predominantly backward comb with about 0.608
 pump-to-comb conversion efficiency and about 0.013 remaining pump power.
 Setting the literal equation phase to zero suppresses the comb by more than a
-factor of 20 in the regression benchmark. This is a reconstruction after a
+factor of 20 in the physics benchmark. This is a reconstruction after a
 derived $\pi$ relabeling of the paper's plotted phase axis, not a fit of an
 additional physical parameter. The configured $R=0.97$ is the upper end of the
 paper's reported measured range.
