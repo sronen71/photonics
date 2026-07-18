@@ -7,19 +7,23 @@ from spectrum import time_average
 from spectral import mode_numbers
 
 
-def bidirectional_output(
+def bidirectional_port_power(
     forward_fields,
     backward_fields,
     parameters,
-    times=None,
     pump_frequency_hz=None,
     fsr_hz=None,
 ):
-    """Calculate both port spectra, conversion efficiency, and pump use.
+    """Return instantaneous, input-normalized power in both circuit ports.
 
     Port fields use the paper's bus-ring scattering convention.  Within the
     reflection band, a fraction R of the forward through field feeds the
     backward input and the remaining fraction 1-R exits the forward port.
+
+    The returned spectral arrays retain the unshifted FFT ordering and have
+    shape ``(times, spatial_points)``.  Keeping this primitive separate lets
+    scans inspect every spectrum while :func:`bidirectional_output` applies
+    the usual time average for a single reported spectrum.
     """
     forward_fields = np.asarray(forward_fields, dtype=complex)
     backward_fields = np.asarray(backward_fields, dtype=complex)
@@ -89,11 +93,6 @@ def bidirectional_output(
         * frequency_weight[None, :]
         / input_power
     )
-    comb = modes != 0.0
-    pump_power_ratio = forward_power[:, 0] + backward_power[:, 0]
-    forward_comb_ratio = np.sum(forward_power[:, comb], axis=1)
-    backward_comb_ratio = np.sum(backward_power[:, comb], axis=1)
-    conversion_efficiency = forward_comb_ratio + backward_comb_ratio
     intrinsic_loss_ratio = (
         2.0
         / (parameters.coupling_factor + 1.0)
@@ -107,6 +106,44 @@ def bidirectional_output(
         )
         / input_power
     )
+    result = {
+        "mode_number": modes,
+        "forward_power_ratio": forward_power,
+        "backward_power_ratio": backward_power,
+        "intrinsic_loss_ratio": intrinsic_loss_ratio,
+    }
+    if optical_frequency_hz is not None:
+        result["optical_frequency_thz"] = optical_frequency_hz / 1.0e12
+    return result
+
+
+def bidirectional_output(
+    forward_fields,
+    backward_fields,
+    parameters,
+    times=None,
+    pump_frequency_hz=None,
+    fsr_hz=None,
+):
+    """Calculate both port spectra, conversion efficiency, and pump use."""
+    port_power = bidirectional_port_power(
+        forward_fields,
+        backward_fields,
+        parameters,
+        pump_frequency_hz=pump_frequency_hz,
+        fsr_hz=fsr_hz,
+    )
+    modes = port_power["mode_number"]
+    forward_power = port_power["forward_power_ratio"]
+    backward_power = port_power["backward_power_ratio"]
+    comb = modes != 0.0
+    forward_pump_ratio = forward_power[:, 0]
+    backward_pump_ratio = backward_power[:, 0]
+    pump_power_ratio = forward_power[:, 0] + backward_power[:, 0]
+    forward_comb_ratio = np.sum(forward_power[:, comb], axis=1)
+    backward_comb_ratio = np.sum(backward_power[:, comb], axis=1)
+    conversion_efficiency = forward_comb_ratio + backward_comb_ratio
+    intrinsic_loss_ratio = port_power["intrinsic_loss_ratio"]
 
     result = {
         "mode_number": np.fft.fftshift(modes),
@@ -116,6 +153,8 @@ def bidirectional_output(
         "backward_power_ratio": np.fft.fftshift(
             time_average(backward_power, times)
         ),
+        "forward_pump_ratio": forward_pump_ratio,
+        "backward_pump_ratio": backward_pump_ratio,
         "pump_power_ratio": pump_power_ratio,
         "forward_comb_ratio": forward_comb_ratio,
         "backward_comb_ratio": backward_comb_ratio,
@@ -126,8 +165,8 @@ def bidirectional_output(
             pump_power_ratio + conversion_efficiency + intrinsic_loss_ratio
         ),
     }
-    if optical_frequency_hz is not None:
-        result["optical_frequency_thz"] = (
-            np.fft.fftshift(optical_frequency_hz) / 1.0e12
+    if "optical_frequency_thz" in port_power:
+        result["optical_frequency_thz"] = np.fft.fftshift(
+            port_power["optical_frequency_thz"]
         )
     return result

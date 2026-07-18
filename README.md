@@ -325,6 +325,40 @@ derived $\pi$ relabeling of the paper's plotted phase axis, not a fit of an
 additional physical parameter. The configured $R=0.97$ is the upper end of the
 paper's reported measured range.
 
+### Standalone Supplementary Figure S1 reconstruction
+
+Run the detuning scan used to reconstruct all three panels of Supplementary
+Fig. S1 with
+
+```bash
+python3 reproduce_figure_s1.py
+```
+
+The script uses the same bidirectional LLE and circuit input-output functions
+as the normal solver. By default it downloads the official
+[Supplementary Figure source data](https://www.nature.com/articles/s41566-025-01624-1#Sec13),
+creates a paper-style figure, overlays the published arrays with the new
+simulation, and writes objective comparison metrics under `results/figure_s1/`.
+Use `--paper-data PATH` for an existing
+`SourceData_Supplemental_Information_S1.xlsx`, or
+`--no-paper-comparison` for an offline simulation-only run.
+
+The paper specifies $K=4.5$ for Fig. 1d/S1, in contrast with the $K=3$
+Fig. 1e/S2 configuration above. It does not publish every S1 simulation input
+or the detuning-scan protocol. The standalone reconstruction therefore labels
+the following choices as inferred rather than reported: $F=2.0$, $R=0.90$, the
+two scan rates, and the deterministic random-noise seed used to access the
+subcritical soliton branch. It uses literal equation phase $\phi=\pi$, which
+is the paper's constructive device phase after the derived phase relabeling.
+
+At the default 256-point resolution, comparison with the official simulated
+source arrays gives backward CE 0.6685 versus 0.6741 at $\alpha=6.98$,
+remaining pump 0.0553 versus 0.0360, collapse detuning 7.5859 versus 7.5600,
+an overall power-trace RMSE of 0.0453, and a 0.909 correlation for the backward
+spectral-evolution map. The selected backward-spectrum median RMSE is 13.3 dB;
+most of that difference is in weak spectral wings. This is a standalone
+quantitative audit, not an additional unit test.
+
 The numerical pieces are intentionally separate:
 
 - `bidirectional.py` contains only the coupled residual and exact split-step
