@@ -8,20 +8,25 @@ than implementation details.
 import unittest
 
 import numpy as np
+from scipy.signal import resample
 
 from lle_solver import solve_lle, uniform_states
 from steady_solver import single_soliton_seed, solve_stationary
 from uniform_solver import CRITICAL_ALPHA, fold_points, pump_power
 
 
-def periodic_fwhm(values):
-    """Return a linearly interpolated FWHM on a 2*pi periodic grid."""
+def periodic_fwhm(values, refinement=64):
+    """Return a spectrally interpolated FWHM on a 2*pi periodic grid."""
     values = np.asarray(values)
     spatial_points = values.size
     peak_index = int(np.argmax(values))
     centered = np.roll(values, spatial_points // 2 - peak_index)
-    coordinate = 2.0 * np.pi * np.arange(spatial_points) / spatial_points
-    center = spatial_points // 2
+    centered = resample(centered, refinement * spatial_points)
+    centered = np.roll(
+        centered, centered.size // 2 - int(np.argmax(centered))
+    )
+    coordinate = 2.0 * np.pi * np.arange(centered.size) / centered.size
+    center = centered.size // 2
     half_maximum = 0.5 * centered[center]
 
     left = center
@@ -34,7 +39,7 @@ def periodic_fwhm(values):
     )
 
     right = center
-    while right < spatial_points - 1 and centered[right] >= half_maximum:
+    while right < centered.size - 1 and centered[right] >= half_maximum:
         right += 1
     right_crossing = coordinate[right - 1] + (
         (half_maximum - centered[right - 1])
@@ -239,37 +244,64 @@ class ScalarLLEPhysicsBenchmarks(unittest.TestCase):
         )
         self.assertEqual(int(np.sum(significant_peaks)), mode)
 
-    def test_bright_soliton_peak_width_and_stationarity(self):
-        """Reproduce the large-detuning sech-soliton scaling laws."""
+    def test_bright_soliton_asymptotics_and_stationarity(self):
+        """Check large-detuning sech asymptotics and LLE stationarity."""
         # Coen and Erkintalo, Opt. Lett. 38, 1790 (2013):
-        # |A|^2_peak ~ 2*alpha and, after translating their beta=-2
-        # convention to this code, FWHM ~
+        # At large detuning, |A|^2_peak approaches 2*alpha and, after
+        # translating their beta=-2 convention to this code, FWHM approaches
         # 2*arcosh(sqrt(2))*sqrt(|beta|/(2*alpha)).
+        # These are asymptotic scaling laws, not exact finite-alpha solutions.
         alpha = 10.0
         forcing = np.sqrt(10.0)
         beta = -0.2
-        spatial_points = 128
-        theta = 2.0 * np.pi * np.arange(spatial_points) / spatial_points
-        background = uniform_states(alpha, forcing)[0]
-        initial_guess = single_soliton_seed(
-            theta, alpha, forcing, beta
+        coarse_points = 128
+        coarse_theta = (
+            2.0 * np.pi * np.arange(coarse_points) / coarse_points
         )
-        solution, residual, _ = solve_stationary(
-            initial_guess,
+        coarse_guess = single_soliton_seed(
+            coarse_theta, alpha, forcing, beta
+        )
+        coarse_solution, coarse_residual, _ = solve_stationary(
+            coarse_guess,
             alpha,
             forcing,
             beta,
             tolerance=2.0e-8,
             max_iterations=500,
         )
+        self.assertLess(coarse_residual, 2.0e-8)
+
+        # Continue the converged solution onto a finer spectral grid. Direct
+        # Newton iteration from the analytic asymptotic seed becomes poorly
+        # conditioned at this resolution, while continuation follows the same
+        # localized stationary branch robustly.
+        spatial_points = 256
+        theta = 2.0 * np.pi * np.arange(spatial_points) / spatial_points
+        background = uniform_states(alpha, forcing)[0]
+        initial_guess = resample(coarse_solution, spatial_points)
+        solution, residual, _ = solve_stationary(
+            initial_guess,
+            alpha,
+            forcing,
+            beta,
+            tolerance=2.0e-8,
+            max_iterations=1500,
+        )
         self.assertLess(residual, 2.0e-8)
 
         intensity = abs(solution) ** 2
         expected_peak = 2.0 * alpha
+        coarse_peak = np.max(abs(coarse_solution) ** 2)
+        self.assertLess(abs(intensity.max() / coarse_peak - 1.0), 2.0e-4)
         self.assertLess(abs(intensity.max() / expected_peak - 1.0), 0.08)
 
+        # The sech law describes the localized pulse, so measure the FWHM of
+        # the field after subtracting its CW background. Spectral interpolation
+        # avoids a percent-level bias from the coarse-grid half-maximum crossing.
         pulse_intensity = abs(solution - background) ** 2
         measured_width = periodic_fwhm(pulse_intensity)
+        coarse_width = periodic_fwhm(abs(coarse_solution - background) ** 2)
+        self.assertLess(abs(measured_width / coarse_width - 1.0), 1.0e-3)
         expected_width = (
             2.0
             * np.arccosh(np.sqrt(2.0))
