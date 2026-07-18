@@ -16,6 +16,7 @@ from bidirectional import (
 )
 from bidirectional_spectrum import bidirectional_output
 from bidirectional_steady import solve_bidirectional_steady_state
+from drift import translate_fields
 from lle_solver import solve_lle
 from spectral import mode_numbers
 
@@ -204,8 +205,8 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
         )
         self.assertLess(max(np.max(abs(value)) for value in residuals), 1.0e-10)
 
-    def test_reported_regime_after_derived_phase_relabeling(self):
-        """Check the high-efficiency contrast after the derived pi relabeling."""
+    def test_reported_regime_and_localized_translation_symmetry(self):
+        """Reproduce high CE and the common translation orbit of its pulse."""
         beta = normalized_beta_2(
             d2_rad_s=-2.0 * np.pi * 8.5e6,
             center_frequency_hz=193.1e12,
@@ -217,6 +218,7 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
         pump_ratios = {}
         backward_fractions = {}
         variations = {}
+        localized_state = None
         for label, phase in (
             ("constructive", np.pi),
             ("destructive", 0.0),
@@ -237,7 +239,7 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
 
             _, _, forward, backward = solve_bidirectional_lle(
                 parameters,
-                spatial_points=64,
+                spatial_points=128 if label == "constructive" else 64,
                 final_time=100.0,
                 time_step=0.01,
                 initial_noise=0.003,
@@ -256,6 +258,10 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
                 np.std(output["conversion_efficiency"][-20:])
                 / max(np.mean(output["conversion_efficiency"][-20:]), 1.0e-30)
             )
+            if label == "constructive":
+                localized_state = (
+                    forward[-1], backward[-1], parameters
+                )
 
         self.assertGreater(efficiencies["constructive"], 0.57)
         self.assertLess(efficiencies["constructive"], 0.67)
@@ -266,6 +272,43 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
         self.assertGreater(
             efficiencies["constructive"],
             20.0 * efficiencies["destructive"],
+        )
+
+        initial_forward, initial_backward, parameters = localized_state
+        steady = solve_bidirectional_steady_state(
+            initial_forward,
+            initial_backward,
+            parameters,
+            tolerance=2.0e-8,
+            max_iterations=100,
+        )
+        self.assertLess(steady[2], 2.0e-8)
+        self.assertGreater(np.std(np.abs(steady[1])), 0.1)
+
+        # A common azimuthal shift represents the same physical state.  Use
+        # an exact collocation-grid shift so this remains an exact symmetry of
+        # the discretized nonlinear equation as well as of the continuum LLE.
+        shift = 7.0 * 2.0 * np.pi / initial_forward.size
+        shifted_initial = translate_fields(
+            np.stack((initial_forward, initial_backward)),
+            np.full(2, shift),
+        )
+        shifted_steady = solve_bidirectional_steady_state(
+            shifted_initial[0],
+            shifted_initial[1],
+            parameters,
+            tolerance=2.0e-8,
+            max_iterations=100,
+        )
+        self.assertLess(shifted_steady[2], 2.0e-8)
+        expected_shifted = translate_fields(
+            np.stack((steady[0], steady[1])), np.full(2, shift)
+        )
+        np.testing.assert_allclose(
+            shifted_steady[0], expected_shifted[0], rtol=1.0e-8, atol=1.0e-8
+        )
+        np.testing.assert_allclose(
+            shifted_steady[1], expected_shifted[1], rtol=1.0e-8, atol=1.0e-8
         )
 
 

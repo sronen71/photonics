@@ -27,7 +27,12 @@ from config_loader import (
     load_section,
 )
 from dispersion import as_dispersion, dispersion_is_even, soliton_seed_beta
-from drift import estimate_drift, spectral_derivative
+from drift import (
+    estimate_drift,
+    spectral_derivative,
+    translation_gauge,
+    translation_phase_condition,
+)
 from physics import load_solver_physics, normalized_summary
 from spectral import mode_numbers
 from spectrum import output_spectrum
@@ -229,14 +234,12 @@ def _solve_moving_frame(
     spatial_points = initial_guess.size
     mode_number = mode_numbers(spatial_points)
     modal_dispersion = as_dispersion(beta).values(mode_number)
-    reference = np.asarray(initial_guess, dtype=complex).copy()
-    reference_derivative = spectral_derivative(reference)
-    derivative_norm = float(np.sqrt(np.mean(np.abs(reference_derivative) ** 2)))
-    if derivative_norm <= np.finfo(float).eps:
+    try:
+        reference, phase_direction = translation_gauge(initial_guess)
+    except ValueError:
         raise ValueError(
             "a moving-frame solve requires a nonuniform initial field"
-        )
-    phase_direction = reference_derivative / derivative_norm
+        ) from None
 
     spectral_linear_operator = (
         -(1.0 + 1j * alpha) + 1j * modal_dispersion
@@ -256,9 +259,9 @@ def _solve_moving_frame(
             mode_number,
             modal_dispersion=modal_dispersion,
         )
-        phase_condition = float(np.real(np.vdot(
-            phase_direction, amplitude - reference
-        )) / spatial_points)
+        phase_condition = translation_phase_condition(
+            amplitude, reference, phase_direction
+        )
         return np.concatenate((
             residual.real,
             residual.imag,

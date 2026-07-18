@@ -316,8 +316,11 @@ $\pi$.
 The configuration and code use the literal equation phase, with
 `reflector_phase: pi`; no fitted phase-reference parameter is present. The
 default starts from noise, scans to $\alpha=6.98$, time-averages both external
-ports, and refines the final state with the even-dispersion Newton--Krylov
-solver. It produces a stable, predominantly backward comb with about 0.608
+ports, and refines the final state with the phase-conditioned even-dispersion
+solver. The localized refinement includes a translational phase condition:
+this removes the neutral freedom to place the same pulse anywhere on the ring
+while retaining the physical even-dispersion velocity $v=0$. It produces a
+stable, predominantly backward comb with about 0.608
 pump-to-comb conversion efficiency and about 0.013 remaining pump power.
 Setting the literal equation phase to zero suppresses the comb by more than a
 factor of 20 in the physics benchmark. This is a reconstruction after a
@@ -363,7 +366,8 @@ The numerical pieces are intentionally separate:
 
 - `bidirectional.py` contains only the coupled residual and exact split-step
   subflows.
-- `bidirectional_steady.py` refines the paper's even-$D_2$, $v=0$ state.
+- `bidirectional_steady.py` phase-conditions and refines the paper's
+  even-$D_2$, $v=0$ state.
 - `bidirectional_spectrum.py` applies the circuit scattering relations and
   reports both port spectra, conversion efficiency, pump consumption, and the
   steady power budget.
@@ -374,9 +378,11 @@ The runner saves the dynamic histories, the refined steady fields, both port
 spectra, power-flow traces, and residuals in
 `results/bidirectional_lle_output.npz`; its summary figure is
 `results/bidirectional_lle_response.png`. The steady refiner deliberately uses
-$v=0$ after verifying even dispersion. A future bidirectional odd-dispersion
-extension would need one shared drift velocity and a translation phase
-condition, as the scalar traveling-state solver already does.
+$v=0$ after verifying even dispersion. Its auxiliary shift rate only borders
+the translation null mode, and the original fixed-frame residual must still
+meet tolerance. A future bidirectional odd-dispersion extension would instead
+solve for one physical shared drift velocity, as the scalar traveling-state
+solver already does.
 
 ## Physics validation
 
@@ -419,8 +425,9 @@ Exact benchmarks:
 - The bidirectional PhCR model of Zang et al.: dimensional-dispersion sign
   conversion, reduction to the scalar LLE when coupling is disabled, exact
   modal reflector propagation, factor-two cross-phase modulation, steady port
-  energy conservation, the red split-mode phase derivation, and the
-  high-efficiency contrast after relabeling the plotted phase axis by $\pi$.
+  energy conservation, the red split-mode phase derivation, the high-efficiency
+  contrast after relabeling the plotted phase axis by $\pi$, and the common
+  translation orbit of the localized steady state.
 
 Asymptotic consistency check:
 

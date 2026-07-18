@@ -206,7 +206,7 @@ def steady_result_payload(
     steady_forward,
     steady_backward,
     steady_residual,
-    steady_iterations,
+    steady_solver_steps,
     parameters,
     pump_frequency_hz=None,
     fsr_hz=None,
@@ -223,7 +223,7 @@ def steady_result_payload(
         "steady_forward": steady_forward,
         "steady_backward": steady_backward,
         "steady_maximum_residual": steady_residual,
-        "steady_iterations": steady_iterations,
+        "steady_solver_steps": steady_solver_steps,
         "steady_forward_output_power_ratio": (
             steady_output["forward_power_ratio"]
         ),
@@ -303,13 +303,13 @@ def save_results(
             steady_forward,
             steady_backward,
             steady_residual,
-            steady_iterations,
+            steady_solver_steps,
         ) = steady_state
         saved.update(steady_result_payload(
             steady_forward,
             steady_backward,
             steady_residual,
-            steady_iterations,
+            steady_solver_steps,
             parameters,
             pump_frequency_hz,
             fsr_hz,
@@ -474,7 +474,7 @@ def main():
         print(
             "Steady refinement: "
             f"residual={steady_state[2]:.3e}, "
-            f"iterations={steady_state[3]}",
+            f"solver steps={steady_state[3]}",
             flush=True,
         )
     print("Results saved.", flush=True)
