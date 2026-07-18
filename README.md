@@ -3,16 +3,23 @@
 Small Python solvers for the normalized Lugiato--Lefever equation (LLE) on a
 periodic ring. Generated figures and data are written to `results/`.
 
-The convention used here is
+## Model
 
-```text
-dA/dt = -(1 + i*alpha)A + i|A|^2 A
-        - i*(beta/2)*d^2A/dtheta^2 + F.
-```
+The normalized LLE solved here is
 
-It is the convention of Godey et al.: `t = kappa*t_physical/2`, where `kappa`
-is the loaded-cavity linewidth; positive `alpha` is red pump detuning; and
-`beta < 0` is anomalous dispersion.
+$$
+\frac{\partial A}{\partial t}
+= -(1+i\alpha)A+i|A|^2A
+-i\frac{\beta}{2}\frac{\partial^2 A}{\partial\theta^2}+F,
+\qquad A(\theta+2\pi,t)=A(\theta,t).
+$$
+
+Here, $A(\theta,t)$ is the complex intracavity field, $\alpha$ is detuning,
+$\beta$ is dispersion, and $F$ is the real pump amplitude.
+
+This is the convention of Godey et al.: $t=\kappa t_{\mathrm{physical}}/2$,
+where $\kappa$ is the loaded-cavity linewidth; positive $\alpha$ is red pump
+detuning; and $\beta<0$ is anomalous dispersion.
 
 The time-dependent solver uses a split-step Fourier method. It alternates exact
 half-step evolution under the driven linear cavity (loss, detuning, dispersion,
