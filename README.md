@@ -17,6 +17,17 @@ $$
 Here, $A(\theta,t)$ is the complex intracavity field, $\alpha$ is detuning,
 $\beta$ is dispersion, and $F$ is the real pump amplitude.
 
+The `lle` and `steady` solvers can instead use an arbitrary real modal
+dispersion $D(k)$:
+
+$$
+\frac{\partial A}{\partial t}
+=-(1+i\alpha)A+i|A|^2A+iD(-i\partial_\theta)A+F.
+$$
+
+For the default quadratic model, $D(k)=\beta k^2/2$, so this is identical to
+the equation above.
+
 This is the convention of Godey et al.: $t=\kappa t_{\mathrm{physical}}/2$,
 where $\kappa$ is the loaded-cavity linewidth; positive $\alpha$ is red pump
 detuning; and $\beta<0$ is anomalous dispersion.
@@ -36,9 +47,58 @@ python3 -m pip install -r requirements.txt
 ## Examples
 
 Edit `config.yaml`, then run a solver without parameter flags. The `physics`
-section supplies the shared `alpha`, pump, and `beta` values used by both the
+section supplies the shared detuning, pump, and dispersion used by both the
 `lle` and `steady` solvers; their numerical settings remain in separate
 sections.
+
+### Dispersion CSV
+
+By default, `physics.beta` selects the original quadratic dispersion. To use
+an external relation, replace `beta` with a CSV path:
+
+```yaml
+physics:
+  alpha: 4.0
+  f_real: 2.0
+  dispersion_csv: dispersion.csv
+```
+
+The path is resolved relative to the YAML file. The CSV header selects one of
+two representations.
+
+For a polynomial, use `order,beta` rows:
+
+```csv
+order,beta
+2,-0.02
+3,0.0001
+```
+
+These coefficients define
+$D(k)=\sum_n \beta_n k^n/n!$. Thus a file containing only
+`2,-0.02` exactly reproduces the default `beta: -0.02` model.
+
+For tabulated values, use `k,dispersion` rows:
+
+```csv
+k,dispersion
+-256,-655.36
+-255,-650.25
+0,0.0
+254,-645.16
+255,-650.25
+```
+
+Here `dispersion` is $D(k)$ itself, not $\beta$. Values are linearly
+interpolated, and the grid must cover every FFT mode used by the solver:
+$-N/2$ through $N/2-1$ for even `spatial_points: N`. Grid rows may be unevenly
+spaced, and comment lines beginning with `#` are ignored.
+
+The analytic bright-soliton initial shape uses the polynomial $\beta_2$. For a
+grid, it uses the local discrete curvature
+$D(1)-2D(0)+D(-1)$. This coefficient must be negative when `initial_shape` is
+`soliton` and for the steady solver's bright-soliton seed; the actual solve
+always uses the complete CSV relation.
 
 Plot the uniform response curves (`uniform` section):
 

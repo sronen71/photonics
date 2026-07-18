@@ -13,6 +13,8 @@ uniform:
 physics:
   alpha: 4.0
   f_real: 2.0
+  # Default quadratic dispersion. To use an arbitrary relation, replace this
+  # line with: dispersion_csv: path/to/dispersion.csv
   beta: -0.02
 
 lle:

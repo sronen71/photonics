@@ -2,10 +2,10 @@
 """Solve the Lugiato--Lefever equation on a ring.
 
     dA/dt = -(1 + i*alpha)A + i|A|^2 A
-            - i*(beta/2)*d^2A/dtheta^2 + F
+            + i*D(-i*d/dtheta)A + F
 
 The azimuthal coordinate theta is periodic on [0, 2*pi).  The pump F,
-detuning alpha, and dispersion beta are constant.
+detuning alpha, and modal dispersion D(k) are constant.
 """
 
 from pathlib import Path
@@ -16,11 +16,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from config_loader import (
-    PHYSICS_KEYS,
     ConfigurationError,
     config_parser,
+    load_physics,
     load_section,
 )
+from dispersion import as_dispersion, load_dispersion, soliton_seed_beta
 
 
 RESULTS_DIRECTORY = Path("results")
@@ -58,6 +59,7 @@ def uniform_states(alpha: float, forcing: complex):
 
 def single_soliton_seed(theta, alpha, forcing, beta):
     """Return a lower-background plus phase-matched sech pulse."""
+    beta = soliton_seed_beta(beta)
     if beta >= 0.0:
         raise ValueError("the bright-soliton seed requires beta < 0")
     background = uniform_states(alpha, forcing)[0]
@@ -76,12 +78,12 @@ def single_soliton_seed(theta, alpha, forcing, beta):
 
 
 def linear_half_step_parameters(
-    alpha, forcing, beta, mode_number, step
+    alpha, forcing, beta, mode_number, step, modal_dispersion=None
 ):
     """Return the exact driven-linear flow for half a time step."""
-    linear_operator = (
-        -(1.0 + 1j * alpha) + 0.5j * beta * mode_number**2
-    )
+    if modal_dispersion is None:
+        modal_dispersion = as_dispersion(beta).values(mode_number)
+    linear_operator = -(1.0 + 1j * alpha) + 1j * modal_dispersion
     half_step = 0.5 * step
     propagator = np.exp(half_step * linear_operator)
 
@@ -142,9 +144,15 @@ def solve_lle(
     mode_number = 2.0 * np.pi * np.fft.fftfreq(
         spatial_points, d=angular_step
     )
+    modal_dispersion = as_dispersion(beta).values(mode_number)
 
     half_linear_step, half_drive_step = linear_half_step_parameters(
-        alpha, forcing, beta, mode_number, time_step
+        alpha,
+        forcing,
+        beta,
+        mode_number,
+        time_step,
+        modal_dispersion=modal_dispersion,
     )
 
     rng = np.random.default_rng(seed)
@@ -166,11 +174,21 @@ def solve_lle(
         if alpha_schedule is not None:
             step_alpha = alpha_schedule(index * time_step + 0.5 * step)
             propagator, drive_increment = linear_half_step_parameters(
-                step_alpha, forcing, beta, mode_number, step
+                step_alpha,
+                forcing,
+                beta,
+                mode_number,
+                step,
+                modal_dispersion=modal_dispersion,
             )
         elif step != time_step:
             propagator, drive_increment = linear_half_step_parameters(
-                alpha, forcing, beta, mode_number, step
+                alpha,
+                forcing,
+                beta,
+                mode_number,
+                step,
+                modal_dispersion=modal_dispersion,
             )
         else:
             propagator = half_linear_step
@@ -248,9 +266,9 @@ def save_figure(
         if alpha_start is not None
         else rf"$\alpha={alpha:g}$"
     )
+    dispersion_text = as_dispersion(beta).description
     figure.suptitle(
-        rf"Ring LLE: {alpha_text}, $F={forcing.real:g}$, "
-        rf"$\beta={beta:g}$",
+        rf"Ring LLE: {alpha_text}, $F={forcing.real:g}$, {dispersion_text}",
         fontsize=14,
     )
     figure.tight_layout()
@@ -267,10 +285,11 @@ def main() -> None:
     parser = config_parser(__doc__)
     command_line = parser.parse_args()
     try:
-        physics = load_section(command_line.config, "physics", PHYSICS_KEYS)
+        physics = load_physics(command_line.config)
+        dispersion = load_dispersion(physics, command_line.config)
         arguments = load_section(command_line.config, "lle", CONFIGURATION_KEYS)
-        for name in PHYSICS_KEYS:
-            setattr(arguments, name, float(getattr(physics, name)))
+        arguments.alpha = float(physics.alpha)
+        arguments.f_real = float(physics.f_real)
         for name in (
             "final_time",
             "dt",
@@ -315,7 +334,7 @@ def main() -> None:
     alpha_start = None
     if arguments.initial_shape == "soliton":
         initial_background = single_soliton_seed(
-            theta_grid, arguments.alpha, forcing, arguments.beta
+            theta_grid, arguments.alpha, forcing, dispersion
         )
     else:
         initial_background = 0.0j
@@ -331,7 +350,7 @@ def main() -> None:
     theta, times, fields = solve_lle(
         alpha=arguments.alpha,
         forcing=forcing,
-        beta=arguments.beta,
+        beta=dispersion,
         spatial_points=arguments.spatial_points,
         final_time=arguments.final_time,
         time_step=arguments.dt,
@@ -348,7 +367,7 @@ def main() -> None:
         fields,
         arguments.alpha,
         forcing,
-        arguments.beta,
+        dispersion,
         alpha_start=alpha_start,
     )
     print("Figure saved.", flush=True)

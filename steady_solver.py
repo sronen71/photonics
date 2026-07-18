@@ -4,7 +4,7 @@
 The stationary equation is
 
     0 = -(1+i*alpha)A + i|A|^2 A
-        - i*(beta/2)*d^2A/dtheta^2 + F,
+        + i*D(-i*d/dtheta)A + F,
 
 with A(theta + 2*pi) = A(theta).
 """
@@ -18,11 +18,12 @@ import numpy as np
 from scipy.optimize import NoConvergence, newton_krylov
 
 from config_loader import (
-    PHYSICS_KEYS,
     ConfigurationError,
     config_parser,
+    load_physics,
     load_section,
 )
+from dispersion import as_dispersion, load_dispersion, soliton_seed_beta
 
 
 RESULTS_DIRECTORY = Path("results")
@@ -51,6 +52,7 @@ def uniform_states(alpha: float, forcing: complex):
 
 def single_soliton_seed(theta, alpha, forcing, beta):
     """Construct a lower-background plus sech-pulse initial field."""
+    beta = soliton_seed_beta(beta)
     if beta >= 0.0:
         raise ValueError("the bright-soliton seed requires beta < 0")
     background = uniform_states(alpha, forcing)[0]
@@ -68,15 +70,22 @@ def single_soliton_seed(theta, alpha, forcing, beta):
     return background + pulse
 
 
-def stationary_residual(amplitude, alpha, forcing, beta, mode_number):
+def stationary_residual(
+    amplitude,
+    alpha,
+    forcing,
+    beta,
+    mode_number,
+    modal_dispersion=None,
+):
     """Return the complex residual of the stationary ring equation."""
-    second_derivative = np.fft.ifft(
-        -(mode_number**2) * np.fft.fft(amplitude)
-    )
+    if modal_dispersion is None:
+        modal_dispersion = as_dispersion(beta).values(mode_number)
+    dispersed_field = np.fft.ifft(modal_dispersion * np.fft.fft(amplitude))
     return (
         -(1.0 + 1j * alpha) * amplitude
         + 1j * np.abs(amplitude) ** 2 * amplitude
-        - 0.5j * beta * second_derivative
+        + 1j * dispersed_field
         + forcing
     )
 
@@ -101,11 +110,19 @@ def solve_stationary(
     mode_number = 2.0 * np.pi * np.fft.fftfreq(
         spatial_points, d=angular_step
     )
+    modal_dispersion = as_dispersion(beta).values(mode_number)
 
     def real_residual(vector):
         amplitude = unpack(vector)
         return pack(
-            stationary_residual(amplitude, alpha, forcing, beta, mode_number)
+            stationary_residual(
+                amplitude,
+                alpha,
+                forcing,
+                beta,
+                mode_number,
+                modal_dispersion=modal_dispersion,
+            )
         )
 
     iteration_count = 0
@@ -128,7 +145,12 @@ def solve_stationary(
         # residual so a failed solve does not print the complete solution.
         best_solution = unpack(np.asarray(error.args[0]))
         best_residual = stationary_residual(
-            best_solution, alpha, forcing, beta, mode_number
+            best_solution,
+            alpha,
+            forcing,
+            beta,
+            mode_number,
+            modal_dispersion=modal_dispersion,
         )
         maximum_residual = float(np.max(np.abs(best_residual)))
         raise RuntimeError(
@@ -136,7 +158,14 @@ def solve_stationary(
             f"{iteration_count} iterations; maximum residual={maximum_residual:.3e}"
         ) from None
     solution = unpack(np.asarray(solution_vector))
-    residual = stationary_residual(solution, alpha, forcing, beta, mode_number)
+    residual = stationary_residual(
+        solution,
+        alpha,
+        forcing,
+        beta,
+        mode_number,
+        modal_dispersion=modal_dispersion,
+    )
     maximum_residual = float(np.max(np.abs(residual)))
     if maximum_residual > tolerance:
         raise RuntimeError(
@@ -148,6 +177,7 @@ def solve_stationary(
 
 def save_results(theta, amplitude, alpha, forcing, beta, residual, iterations):
     """Save the stationary field, magnitude profile, and mode amplitudes."""
+    dispersion_relation = as_dispersion(beta)
     RESULTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
     intensity = np.abs(amplitude) ** 2
     magnitude = np.abs(amplitude)
@@ -156,6 +186,10 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual, iterations):
     )
     mode_power = (
         np.abs(np.fft.fftshift(np.fft.fft(amplitude))) ** 2 / theta.size**2
+    )
+    unshifted_mode_number = np.fft.fftfreq(theta.size, d=1.0 / theta.size)
+    dispersion_values = np.fft.fftshift(
+        dispersion_relation.values(unshifted_mode_number)
     )
 
     np.savez(
@@ -168,7 +202,18 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual, iterations):
         mode_power=mode_power,
         alpha=alpha,
         forcing=forcing,
-        beta=beta,
+        beta=(
+            np.nan
+            if dispersion_relation.seed_beta is None
+            else dispersion_relation.seed_beta
+        ),
+        beta2=(
+            np.nan
+            if dispersion_relation.seed_beta is None
+            else dispersion_relation.seed_beta
+        ),
+        dispersion_kind=dispersion_relation.kind,
+        dispersion=dispersion_values,
         maximum_residual=residual,
         newton_iterations=iterations,
     )
@@ -214,7 +259,7 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual, iterations):
 
     figure.suptitle(
         rf"$\alpha={alpha:g}$, $F={forcing.real:g}$, "
-        rf"$\beta={beta:g}$",
+        f"{dispersion_relation.description}",
         fontsize=13,
     )
     figure.tight_layout()
@@ -230,12 +275,13 @@ def main():
     parser = config_parser(__doc__)
     command_line = parser.parse_args()
     try:
-        physics = load_section(command_line.config, "physics", PHYSICS_KEYS)
+        physics = load_physics(command_line.config)
+        dispersion = load_dispersion(physics, command_line.config)
         arguments = load_section(
             command_line.config, "steady", CONFIGURATION_KEYS
         )
-        for name in PHYSICS_KEYS:
-            setattr(arguments, name, float(getattr(physics, name)))
+        arguments.alpha = float(physics.alpha)
+        arguments.f_real = float(physics.f_real)
         arguments.tolerance = float(arguments.tolerance)
         for name in ("spatial_points", "max_iterations"):
             setattr(arguments, name, int(getattr(arguments, name)))
@@ -257,7 +303,7 @@ def main():
         0.0, 2.0 * np.pi, arguments.spatial_points, endpoint=False
     )
     initial_guess = single_soliton_seed(
-        theta_grid, arguments.alpha, forcing, arguments.beta
+        theta_grid, arguments.alpha, forcing, dispersion
     )
 
     print("Solving stationary equation...", flush=True)
@@ -265,7 +311,7 @@ def main():
         initial_guess,
         arguments.alpha,
         forcing,
-        arguments.beta,
+        dispersion,
         arguments.tolerance,
         arguments.max_iterations,
     )
@@ -281,7 +327,7 @@ def main():
         amplitude,
         arguments.alpha,
         forcing,
-        arguments.beta,
+        dispersion,
         residual,
         iterations,
     )
