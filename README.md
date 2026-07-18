@@ -135,6 +135,15 @@ $D(1)-2D(0)+D(-1)$. This coefficient must be negative when `initial_shape` is
 `soliton` and for the steady solver's bright-soliton seed; the actual solve
 always uses the complete CSV relation.
 
+An odd part of $D(k)$, such as third-order dispersion, breaks reflection
+symmetry and generally makes a localized state drift around the ring. The
+time-dependent solver represents that motion directly. The steady solver
+solves only the stationary equation in the selected co-rotating frame and
+does not solve for an unknown drift velocity. A drifting state can therefore
+have steady modal powers while its fixed-frame stationary residual remains
+large. A linear term in $D(k)$ selects a different co-rotating frame when that
+frame velocity is known.
+
 ### Physical parameters
 
 Set `physics.units` to `SI` to derive the normalized detuning, pump, and
@@ -220,6 +229,12 @@ interference between the input pump and cavity leakage at the pumped mode;
 sidebands contain cavity leakage only. With `physics.units: normalized`, it
 instead shows normalized spectral power in dB versus mode number.
 
+The SI frequency labels use the nominal grid
+$\omega_p+2\pi\,\mathrm{FSR}\,k$. This is exact for a stationary comb in that
+co-rotating frame. For a drifting or breathing state, the saved values are
+time-averaged modal powers rather than a slow-time-resolved optical spectrum;
+the code does not infer repetition-rate shifts or resolve breathing sidebands.
+
 `results/steady_solution.npz` stores the underlying spectrum. SI results use
 `output_frequency_thz`, `output_power_w`, and `output_power_dbm`; normalized
 results use `output_mode_number`, `output_normalized_power`, and
@@ -264,6 +279,16 @@ Exact benchmarks:
   `alpha=2.5`, `beta=+0.0125`, and `F^2=2.61`. A pulse-like perturbation must
   relax to one stationary intensity dip on the upper CW background with a
   nonzero first comb sideband.
+- The third-order-dispersion stabilization reported by Parra-Rivas et al. at
+  `theta=6.1`, `u0=4`, and `d3=0.15`. The test distinguishes a steady comb
+  spectrum in a moving frame from a stationary field, and verifies that the
+  corresponding `d3=0` soliton breathes strongly.
+- The dimensional normalization and through-port input-output relation. At
+  critical coupling, a Kerr-shifted resonant continuous wave must cancel the
+  incident pump at the through port, while a sideband has the expected
+  out-coupled photon flux and optical frequency.
+- The exact finite-window average power of a freely decaying cavity mode,
+  which checks the time-averaged spectrum calculation.
 
 Asymptotic consistency check:
 
@@ -283,3 +308,10 @@ Primary references:
   Phys. Rev. A 89, 063814 (2014).
 - S. Coen and M. Erkintalo, [Universal scaling laws of Kerr frequency
   combs](https://doi.org/10.1364/OL.38.001790), Opt. Lett. 38, 1790 (2013).
+- Y. K. Chembo and C. R. Menyuk, [Spatiotemporal Lugiato--Lefever formalism
+  for Kerr-comb generation in whispering-gallery-mode
+  resonators](https://doi.org/10.1103/PhysRevA.87.053852), Phys. Rev. A 87,
+  053852 (2013).
+- P. Parra-Rivas et al., [Third-order chromatic dispersion stabilizes Kerr
+  frequency combs](https://doi.org/10.1364/OL.39.002971), Opt. Lett. 39,
+  2971 (2014).
