@@ -11,7 +11,7 @@ import numpy as np
 from scipy.signal import resample
 
 from lle_solver import solve_lle, uniform_states
-from steady_solver import single_soliton_seed, solve_stationary
+from steady_solver import single_soliton_seed, solve_steady_state
 from uniform_solver import CRITICAL_ALPHA, fold_points, pump_power
 
 
@@ -338,7 +338,7 @@ class ScalarLLEPhysicsBenchmarks(unittest.TestCase):
         coarse_guess = single_soliton_seed(
             coarse_theta, alpha, forcing, beta
         )
-        coarse_solution, coarse_residual, _ = solve_stationary(
+        coarse_solution, coarse_velocity, coarse_residual, _ = solve_steady_state(
             coarse_guess,
             alpha,
             forcing,
@@ -346,6 +346,7 @@ class ScalarLLEPhysicsBenchmarks(unittest.TestCase):
             tolerance=2.0e-8,
             max_iterations=500,
         )
+        self.assertEqual(coarse_velocity, 0.0)
         self.assertLess(coarse_residual, 2.0e-8)
 
         # Continue the converged solution onto a finer spectral grid. Direct
@@ -356,7 +357,7 @@ class ScalarLLEPhysicsBenchmarks(unittest.TestCase):
         theta = 2.0 * np.pi * np.arange(spatial_points) / spatial_points
         background = uniform_states(alpha, forcing)[0]
         initial_guess = resample(coarse_solution, spatial_points)
-        solution, residual, _ = solve_stationary(
+        solution, velocity, residual, _ = solve_steady_state(
             initial_guess,
             alpha,
             forcing,
@@ -364,6 +365,7 @@ class ScalarLLEPhysicsBenchmarks(unittest.TestCase):
             tolerance=2.0e-8,
             max_iterations=1500,
         )
+        self.assertEqual(velocity, 0.0)
         self.assertLess(residual, 2.0e-8)
 
         intensity = abs(solution) ** 2
