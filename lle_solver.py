@@ -28,8 +28,6 @@ CONFIGURATION_KEYS = {
     "spatial_points",
     "final_time",
     "dt",
-    "split_step_tolerance",
-    "split_step_max_iterations",
     "initial_noise",
     "snapshots",
     "seed",
@@ -77,45 +75,42 @@ def single_soliton_seed(theta, alpha, forcing, beta):
     return background + pulse
 
 
-def iterative_split_step(
+def linear_half_step_parameters(
+    alpha, forcing, beta, mode_number, step
+):
+    """Return the exact driven-linear flow for half a time step."""
+    linear_operator = (
+        -(1.0 + 1j * alpha) + 0.5j * beta * mode_number**2
+    )
+    half_step = 0.5 * step
+    propagator = np.exp(half_step * linear_operator)
+
+    # The spatially uniform pump acts only on mode zero.  Its affine
+    # contribution can be integrated exactly together with loss and
+    # detuning: F * (exp(L_0 h/2) - 1) / L_0.
+    pump_operator = linear_operator[0]
+    drive_increment = (
+        forcing * np.expm1(half_step * pump_operator) / pump_operator
+    )
+    return propagator, drive_increment
+
+
+def split_step(
     amplitude,
     step,
-    forcing,
     half_linear_propagator,
-    tolerance,
-    max_iterations,
+    half_drive_increment,
 ):
-    """Advance one pyLLE-style symmetric split step."""
-    # Apply the constant drive explicitly, as in pyLLE's SSFM half-step.
-    driven_field = amplitude + step * forcing
+    """Advance one driven-linear/Kerr Strang split step."""
     first_linear_half = np.fft.ifft(
-        half_linear_propagator * np.fft.fft(driven_field)
+        half_linear_propagator * np.fft.fft(amplitude)
+    ) + half_drive_increment
+    nonlinear_field = first_linear_half * np.exp(
+        1j * step * np.abs(first_linear_half) ** 2
     )
-    initial_nonlinearity = 1j * np.abs(driven_field) ** 2
-    iterate = driven_field
-
-    for _ in range(max_iterations):
-        final_nonlinearity = 1j * np.abs(iterate) ** 2
-        averaged_nonlinearity = 0.5 * (
-            initial_nonlinearity + final_nonlinearity
-        )
-        nonlinear_field = first_linear_half * np.exp(
-            step * averaged_nonlinearity
-        )
-        updated = np.fft.ifft(
-            half_linear_propagator * np.fft.fft(nonlinear_field)
-        )
-
-        scale = max(np.linalg.norm(iterate), np.finfo(float).tiny)
-        relative_change = np.linalg.norm(updated - iterate) / scale
-        if relative_change < tolerance:
-            return updated
-        iterate = updated
-
-    raise RuntimeError(
-        "iterative split step did not converge; reduce lle.dt in the "
-        "configuration"
-    )
+    return np.fft.ifft(
+        half_linear_propagator * np.fft.fft(nonlinear_field)
+    ) + half_drive_increment
 
 
 def solve_lle(
@@ -130,20 +125,15 @@ def solve_lle(
     seed: int,
     initial_background: complex = 0.0j,
     alpha_schedule=None,
-    split_step_tolerance: float = 1.0e-2,
-    split_step_max_iterations: int = 10,
 ):
-    """Integrate using an iterative symmetric split-step Fourier method."""
+    """Integrate using a driven-linear/Kerr split-step Fourier method."""
     if (
         spatial_points < 8
         or final_time <= 0.0
         or time_step <= 0.0
-        or split_step_tolerance <= 0.0
-        or split_step_max_iterations < 1
     ):
         raise ValueError(
-            "spatial points, times, and split-step convergence settings "
-            "must be positive"
+            "spatial points and times must be positive"
         )
 
     theta = np.linspace(0.0, 2.0 * np.pi, spatial_points, endpoint=False)
@@ -153,9 +143,9 @@ def solve_lle(
         spatial_points, d=angular_step
     )
 
-    # Fourier representation of -(1+i*alpha)A - i*(beta/2)A_theta,theta.
-    linear_operator = -(1.0 + 1j * alpha) + 0.5j * beta * mode_number**2
-    half_linear_step = np.exp(0.5 * time_step * linear_operator)
+    half_linear_step, half_drive_step = linear_half_step_parameters(
+        alpha, forcing, beta, mode_number, time_step
+    )
 
     rng = np.random.default_rng(seed)
     # Seed all spatial modes with small complex noise.  The time-dependent
@@ -175,22 +165,22 @@ def solve_lle(
         step = min(time_step, final_time - index * time_step)
         if alpha_schedule is not None:
             step_alpha = alpha_schedule(index * time_step + 0.5 * step)
-            step_operator = (
-                -(1.0 + 1j * step_alpha) + 0.5j * beta * mode_number**2
+            propagator, drive_increment = linear_half_step_parameters(
+                step_alpha, forcing, beta, mode_number, step
             )
-            propagator = np.exp(0.5 * step * step_operator)
         elif step != time_step:
-            propagator = np.exp(0.5 * step * linear_operator)
+            propagator, drive_increment = linear_half_step_parameters(
+                alpha, forcing, beta, mode_number, step
+            )
         else:
             propagator = half_linear_step
+            drive_increment = half_drive_step
 
-        amplitude = iterative_split_step(
+        amplitude = split_step(
             amplitude,
             step,
-            forcing,
             propagator,
-            split_step_tolerance,
-            split_step_max_iterations,
+            drive_increment,
         )
 
         if not np.all(np.isfinite(amplitude)):
@@ -284,7 +274,6 @@ def main() -> None:
         for name in (
             "final_time",
             "dt",
-            "split_step_tolerance",
             "initial_noise",
             "scan_alpha_start",
             "scan_time",
@@ -292,7 +281,6 @@ def main() -> None:
             setattr(arguments, name, float(getattr(arguments, name)))
         for name in (
             "spatial_points",
-            "split_step_max_iterations",
             "snapshots",
             "seed",
         ):
@@ -311,13 +299,11 @@ def main() -> None:
         )
     if (
         arguments.initial_noise < 0.0
-        or arguments.split_step_tolerance <= 0.0
-        or arguments.split_step_max_iterations < 1
         or arguments.snapshots < 1
     ):
         parser.error(
-            "lle.initial_noise must be nonnegative; split-step convergence "
-            "settings and snapshots must be positive"
+            "lle.initial_noise must be nonnegative and snapshots must be "
+            "positive"
         )
 
     print("Solving spatial equation...", flush=True)
@@ -354,8 +340,6 @@ def main() -> None:
         seed=arguments.seed,
         initial_background=initial_background,
         alpha_schedule=alpha_schedule,
-        split_step_tolerance=arguments.split_step_tolerance,
-        split_step_max_iterations=arguments.split_step_max_iterations,
     )
     print("Saving figure...", flush=True)
     save_figure(
