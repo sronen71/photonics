@@ -50,7 +50,6 @@ class BidirectionalParameters:
     reflectivity: float
     reflector_phase: float
     reflector_half_width: int
-    reflector_phase_reference: float = 0.0
 
     def __post_init__(self):
         finite_real = {
@@ -59,7 +58,6 @@ class BidirectionalParameters:
             "coupling_factor": self.coupling_factor,
             "reflectivity": self.reflectivity,
             "reflector_phase": self.reflector_phase,
-            "reflector_phase_reference": self.reflector_phase_reference,
         }
         if not all(np.isfinite(float(value)) for value in finite_real.values()):
             raise ValueError("bidirectional parameters must be finite")
@@ -80,16 +78,9 @@ class BidirectionalParameters:
             raise ValueError("reflector_half_width must be a nonnegative integer")
 
     @property
-    def effective_reflector_phase(self):
-        """Return the reflector phase in this equation's field basis."""
-        return self.reflector_phase + self.reflector_phase_reference
-
-    @property
     def reflector_amplitude(self):
         """Return r=sqrt(R)*exp(i*phi), with R a power reflectivity."""
-        return np.sqrt(self.reflectivity) * np.exp(
-            1j * self.effective_reflector_phase
-        )
+        return np.sqrt(self.reflectivity) * np.exp(1j * self.reflector_phase)
 
     @property
     def bus_coupling(self):

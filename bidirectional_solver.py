@@ -47,7 +47,6 @@ PHYSICS_KEYS = {
     "coupling_factor",
     "reflectivity",
     "reflector_phase",
-    "reflector_phase_reference",
     "reflector_half_width",
     "fsr_hz",
 }
@@ -107,7 +106,6 @@ def load_parameters(config_path):
         reflectivity=numbers["reflectivity"],
         reflector_phase=numbers["reflector_phase"],
         reflector_half_width=half_width,
-        reflector_phase_reference=numbers["reflector_phase_reference"],
     )
     kappa = loaded_linewidth_rad_s(
         numbers["center_frequency_hz"],
@@ -204,6 +202,47 @@ def _analysis_indices(times, duration):
     return indices
 
 
+def steady_result_payload(
+    steady_forward,
+    steady_backward,
+    steady_residual,
+    steady_iterations,
+    parameters,
+    pump_frequency_hz=None,
+    fsr_hz=None,
+):
+    """Return archive entries for a Newton-refined bidirectional state."""
+    steady_output = bidirectional_output(
+        steady_forward,
+        steady_backward,
+        parameters,
+        pump_frequency_hz=pump_frequency_hz,
+        fsr_hz=fsr_hz,
+    )
+    return {
+        "steady_forward": steady_forward,
+        "steady_backward": steady_backward,
+        "steady_maximum_residual": steady_residual,
+        "steady_iterations": steady_iterations,
+        "steady_forward_output_power_ratio": (
+            steady_output["forward_power_ratio"]
+        ),
+        "steady_backward_output_power_ratio": (
+            steady_output["backward_power_ratio"]
+        ),
+        "steady_pump_power_ratio": steady_output["pump_power_ratio"][0],
+        "steady_conversion_efficiency": (
+            steady_output["conversion_efficiency"][0]
+        ),
+        "steady_intrinsic_loss_ratio": (
+            steady_output["intrinsic_loss_ratio"][0]
+        ),
+        "refined_steady_energy_balance": (
+            steady_output["steady_energy_balance"][0]
+        ),
+    }
+
+
 def save_results(
     theta,
     times,
@@ -266,35 +305,15 @@ def save_results(
             steady_residual,
             steady_iterations,
         ) = steady_state
-        saved.update(
-            steady_forward=steady_forward,
-            steady_backward=steady_backward,
-            steady_maximum_residual=steady_residual,
-            steady_iterations=steady_iterations,
-        )
-        steady_output = bidirectional_output(
+        saved.update(steady_result_payload(
             steady_forward,
             steady_backward,
+            steady_residual,
+            steady_iterations,
             parameters,
-            pump_frequency_hz=pump_frequency_hz,
-            fsr_hz=fsr_hz,
-        )
-        saved.update(
-            steady_forward_output_power_ratio=(
-                steady_output["forward_power_ratio"]
-            ),
-            steady_backward_output_power_ratio=(
-                steady_output["backward_power_ratio"]
-            ),
-            steady_pump_power_ratio=steady_output["pump_power_ratio"][0],
-            steady_conversion_efficiency=(
-                steady_output["conversion_efficiency"][0]
-            ),
-            steady_intrinsic_loss_ratio=(
-                steady_output["intrinsic_loss_ratio"][0]
-            ),
-            steady_energy_balance=steady_output["steady_energy_balance"][0],
-        )
+            pump_frequency_hz,
+            fsr_hz,
+        ))
     np.savez(
         RESULTS_DIRECTORY / "bidirectional_lle_output.npz",
         **saved,

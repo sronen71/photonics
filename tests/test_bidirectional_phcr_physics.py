@@ -15,6 +15,7 @@ from bidirectional import (
     solve_bidirectional_lle,
 )
 from bidirectional_spectrum import bidirectional_output
+from bidirectional_solver import steady_result_payload
 from bidirectional_steady import solve_bidirectional_steady_state
 from lle_solver import solve_lle
 from spectral import mode_numbers
@@ -117,6 +118,30 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
                 measured, reference, rtol=2.0e-15, atol=2.0e-15
             )
 
+    def test_red_split_mode_uses_pi_equation_phase(self):
+        """Derive the reflector phase from the linear split-mode basis."""
+        epsilon = 6.0
+        reflectivity = 0.97
+        red_mode = np.array([1.0, -1.0]) / np.sqrt(2.0)
+        blue_mode = np.array([1.0, 1.0]) / np.sqrt(2.0)
+        generator = -(1.0 + 0.5j * epsilon) * np.eye(2)
+        generator += -0.5j * epsilon * np.array([[0.0, 1.0], [1.0, 0.0]])
+        np.testing.assert_allclose(generator @ red_mode, -red_mode)
+
+        # For the paper's displayed -i*epsilon/2 coupling, the red resonance
+        # at alpha=+epsilon/2 is antisymmetric.  The pump vector is F*(1, r),
+        # so r<0 (equation phase pi) drives that mode constructively.
+        drive_at_zero = np.array([1.0, np.sqrt(reflectivity)])
+        drive_at_pi = np.array([1.0, -np.sqrt(reflectivity)])
+        self.assertGreater(
+            abs(np.vdot(red_mode, drive_at_pi)),
+            100.0 * abs(np.vdot(red_mode, drive_at_zero)),
+        )
+        self.assertGreater(
+            abs(np.vdot(blue_mode, drive_at_zero)),
+            100.0 * abs(np.vdot(blue_mode, drive_at_pi)),
+        )
+
     def test_kerr_subflow_has_factor_two_xpm_and_conserves_power(self):
         """Verify the exact counterpropagating nonlinear phase rotation."""
         forward = np.array([0.4 + 0.2j, -0.1 + 0.3j, 0.2 - 0.5j])
@@ -180,8 +205,37 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
         )
         self.assertLess(max(np.max(abs(value)) for value in residuals), 1.0e-10)
 
-    def test_paper_regime_has_one_sided_high_efficiency_soliton(self):
-        """Reproduce the high-efficiency phase contrast of Figs. 1e and S2."""
+    def test_archive_keeps_dynamic_and_refined_energy_balances_distinct(self):
+        """Keep the history and Newton-refined scalar under separate keys."""
+        parameters = BidirectionalParameters(
+            alpha=0.4,
+            forcing=0.3,
+            beta=0.05,
+            epsilon_phc=1.0,
+            coupling_factor=2.0,
+            reflectivity=0.6,
+            reflector_phase=0.2,
+            reflector_half_width=3,
+        )
+        field = np.zeros(16, dtype=complex)
+        dynamic_balance = np.linspace(0.8, 1.0, 5)
+        archive = {"steady_energy_balance": dynamic_balance.copy()}
+        archive.update(steady_result_payload(
+            field,
+            field,
+            0.0,
+            1,
+            parameters,
+        ))
+        np.testing.assert_array_equal(
+            archive["steady_energy_balance"], dynamic_balance
+        )
+        self.assertAlmostEqual(
+            archive["refined_steady_energy_balance"], 1.0, places=14
+        )
+
+    def test_reported_regime_after_derived_phase_relabeling(self):
+        """Check the high-efficiency contrast after the derived pi relabeling."""
         beta = normalized_beta_2(
             d2_rad_s=-2.0 * np.pi * 8.5e6,
             center_frequency_hz=193.1e12,
@@ -189,18 +243,13 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
             coupling_factor=3.0,
         )
 
-        # The absolute coherent-scattering phase is a gauge/device reference
-        # not fixed by the listed scalar parameters.  Calibrate that reference
-        # once to the paper's constructive-interference phi=0 device.  Adding
-        # pi then represents its destructive-interference phi=pi device.
-        phase_reference = 1.1 * np.pi
         efficiencies = {}
         pump_ratios = {}
         backward_fractions = {}
         variations = {}
         for label, phase in (
-            ("constructive", 0.0),
-            ("destructive", np.pi),
+            ("constructive", np.pi),
+            ("destructive", 0.0),
         ):
             parameters = BidirectionalParameters(
                 alpha=6.98,
@@ -211,7 +260,6 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
                 reflectivity=0.97,
                 reflector_phase=phase,
                 reflector_half_width=19,
-                reflector_phase_reference=phase_reference,
             )
 
             def scan(time):
@@ -220,10 +268,10 @@ class BidirectionalPhCRPhysicsBenchmarks(unittest.TestCase):
             _, _, forward, backward = solve_bidirectional_lle(
                 parameters,
                 spatial_points=64,
-                final_time=80.0,
+                final_time=100.0,
                 time_step=0.01,
                 initial_noise=0.003,
-                snapshots=161,
+                snapshots=201,
                 seed=7,
                 alpha_schedule=scan,
             )

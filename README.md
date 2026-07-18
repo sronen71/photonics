@@ -284,9 +284,7 @@ $$
 where $P_{f,b}=\sum_j|E^{f,b}_j|^2$,
 $\gamma=2K/(K+1)$, and $I_\Omega$ restricts reflection to the configured
 mode band. The reflector coefficient is
-$r=\sqrt R\exp[i(\phi+\phi_{\rm ref})]$. Keeping the phase reference separate
-makes the mapping between a fabricated device's PhCR-relative phase and the
-FFT field basis explicit.
+$r=\sqrt R\exp(i\phi)$, exactly as it appears in the displayed equation.
 
 The implementation keeps this repository's sign conventions. Positive
 $\alpha=2(\omega_0-\omega_p)/\kappa$ is red pump detuning, and
@@ -301,15 +299,31 @@ Run the paper benchmark configuration with
 python3 bidirectional_solver.py
 ```
 
-The default starts from noise, scans to $\alpha=6.98$, time-averages the two
-external-port spectra, and refines the final state with the even-dispersion
-Newton--Krylov solver. It reproduces a stable, predominantly backward comb with
-about 0.62 pump-to-comb conversion efficiency and about 0.01 remaining pump
-power. Shifting the physical reflector phase by $\pi$ suppresses conversion by
-more than a factor of 20 in the regression benchmark. The configured
-$R=0.97$ is the upper end of the paper's reported measured range, and
-`reflector_phase_reference` records the single constant phase calibration used
-to map the paper's constructive $\phi=0$ device to this field basis.
+There is a $\pi$ inconsistency between the paper's displayed equation and its
+plotted phase label. The linear pump matrix in that equation is
+$-(1+i\alpha)I-i\epsilon_{\rm PhC}\sigma_x/2$. At the red split resonance
+$\alpha=+\epsilon_{\rm PhC}/2$, its resonant eigenvector is proportional to
+$(1,-1)$. Since the external drive is proportional to $(1,r)$, that red mode
+is driven constructively by $r<0$, or equation phase $\phi=\pi$, while
+$\phi=0$ drives the other split mode. The same group's preceding theory states
+explicitly that the red mode has $E^f_0\simeq-E^b_0$ and maximum conversion at
+$r=-1$ ([Liu et al., 2024](https://doi.org/10.1103/PhysRevLett.132.023801)).
+The newer paper instead calls the constructive fabricated-device setting
+$\phi=0$ but retains $r=\sqrt R\exp(i\phi)$ and the same negative coupling
+sign. Thus its plotted device phase and literal equation phase differ by
+$\pi$.
+
+The configuration and code use the literal equation phase, with
+`reflector_phase: pi`; no fitted phase-reference parameter is present. The
+default starts from noise, scans to $\alpha=6.98$, time-averages both external
+ports, and refines the final state with the even-dispersion Newton--Krylov
+solver. It produces a stable, predominantly backward comb with about 0.608
+pump-to-comb conversion efficiency and about 0.013 remaining pump power.
+Setting the literal equation phase to zero suppresses the comb by more than a
+factor of 20 in the regression benchmark. This is a reconstruction after a
+derived $\pi$ relabeling of the paper's plotted phase axis, not a fit of an
+additional physical parameter. The configured $R=0.97$ is the upper end of the
+paper's reported measured range.
 
 The numerical pieces are intentionally separate:
 
@@ -371,8 +385,8 @@ Exact benchmarks:
 - The bidirectional PhCR model of Zang et al.: dimensional-dispersion sign
   conversion, reduction to the scalar LLE when coupling is disabled, exact
   modal reflector propagation, factor-two cross-phase modulation, steady port
-  energy conservation, and the high-efficiency constructive/destructive phase
-  contrast of Figs. 1e and S2.
+  energy conservation, the red split-mode phase derivation, and the
+  high-efficiency contrast after relabeling the plotted phase axis by $\pi$.
 
 Asymptotic consistency check:
 
@@ -405,3 +419,6 @@ are indexed in [docs/LLE_REFERENCES.md](docs/LLE_REFERENCES.md).
 - J. Zang et al., [Laser power consumption of soliton formation in a
   bidirectional Kerr resonator](https://doi.org/10.1038/s41566-025-01624-1),
   Nature Photonics 19, 510--517 (2025).
+- H. Liu et al., [Threshold and laser conversion in nanostructured-resonator
+  parametric oscillators](https://doi.org/10.1103/PhysRevLett.132.023801),
+  Phys. Rev. Lett. 132, 023801 (2024).

@@ -15,11 +15,11 @@ bidirectional_physics:
   # The measured devices span R=0.90 to 0.97. The high-efficiency Fig. S2
   # benchmark is reproduced at the upper end of that reported range.
   reflectivity: 0.97
-  reflector_phase: 0.0
-  # The paper defines phi relative to the fabricated PhCR but does not give
-  # that device phase in an absolute FFT field basis. This one-time reference
-  # maps its constructive phi=0 device onto our retained field convention.
-  reflector_phase_reference: 3.455751918948773
+  # Literal phase of r=sqrt(R)*exp(i*phi) in Eq. (1). With its -i*epsilon/2
+  # coupling, the red split mode is antisymmetric and is driven at phi=pi.
+  # The paper plots that constructive device setting as phi=0, a pi relabeling
+  # discussed in README.md. No fitted phase offset is used here.
+  reflector_phase: 3.141592653589793
   # The paper uses Omega={-19,-18,...,18,19}.
   reflector_half_width: 19
   fsr_hz: 2.0e11
@@ -33,8 +33,8 @@ bidirectional_lle:
   seed: 7
   operation_mode: scan
   scan_alpha_start: 3.0
-  scan_time: 80.0
+  scan_time: 50.0
   spectrum_average_time: 10.0
   refine_steady_state: true
-  steady_tolerance: 1.0e-8
+  steady_tolerance: 2.0e-8
   steady_max_iterations: 1000

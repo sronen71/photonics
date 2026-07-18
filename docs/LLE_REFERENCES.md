@@ -65,3 +65,16 @@ were combined in the published Physical Review A article.
 
 The arXiv manuscript predates the 2025 version of record. The local supplement
 is the publisher-provided supplementary information for the final article.
+
+## Liu et al. (2024), PhCR phase-convention cross-check
+
+- NIST author copy: [publication PDF](https://tsapps.nist.gov/publication/get_pdf.cfm?pub_id=936538)
+- Published article: [Phys. Rev. Lett. 132, 023801](https://doi.org/10.1103/PhysRevLett.132.023801)
+- Cross-check: the displayed coupled LLE gives an antisymmetric red split mode,
+  $E^f_0\simeq-E^b_0$, and the analysis identifies maximum saturated conversion
+  at $r=-1$, or equation phase $\Phi=\pi$
+
+This fixes the modal phase convention independently of the soliton benchmark.
+The 2025 paper plots its constructive device-relative phase as zero while
+retaining the same equation signs and $r=\sqrt R\exp(i\phi)$, so its plotted
+phase axis is shifted by $\pi$ relative to the literal equation phase.
