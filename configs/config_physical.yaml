@@ -1,0 +1,52 @@
+uniform:
+  alpha_grid:
+    start: 0.0
+    end: 4.0
+    increment: 1.0
+  power_grid:
+    start: 1.0
+    end: 12.0
+    increment: 1.0
+  minimum_alpha: -2.0
+  maximum_alpha: 6.0
+
+physics:
+  units: SI
+
+  # Angular frequencies and linewidths are in rad/s. kappa is the loaded
+  # full-width cavity linewidth, and kappa_external is its coupling part.
+  kappa_rad_s: 1.0e9
+  kappa_external_rad_s: 5.0e8
+  omega_0_rad_s: 1.2e15
+  omega_pump_rad_s: 1.199998e15
+
+  # The ordinary (not angular) free spectral range, in Hz.
+  fsr_hz: 1.0e11
+
+  # Single-photon Kerr frequency shift and input pump power.
+  g_0_rad_s: 6.0
+  pump_power_w: 0.0211
+
+  # Quadratic integrated-dispersion coefficient D_2 in rad/s. Replace this
+  # with dispersion_csv for polynomial or gridded physical dispersion.
+  d2_rad_s: 1.0e7
+
+lle:
+  spatial_points: 512
+  final_time: 50.0
+  dt: 0.005
+  initial_noise: 0.001
+  snapshots: 300
+  # Times remain normalized even when the physics parameters use SI units.
+  spectrum_average_time: 5.0
+  stationary_tolerance: 1.0e-3
+  seed: 7
+  initial_shape: empty
+  operation_mode: scan
+  scan_alpha_start: 0.0
+  scan_time: 30.0
+
+steady:
+  spatial_points: 512
+  tolerance: 1.0e-9
+  max_iterations: 1000

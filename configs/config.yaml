@@ -11,6 +11,9 @@ uniform:
   maximum_alpha: 6.0
 
 physics:
+  # Parameter units: normalized or SI. See README.md for the SI cavity
+  # parameters and their units. This normalized configuration is the default.
+  units: normalized
   alpha: 4.0
   f_real: 2.0
   # Default quadratic dispersion. To use an arbitrary relation, replace this
@@ -24,6 +27,10 @@ lle:
   dt: 0.005
   initial_noise: 0.001
   snapshots: 300
+  # Average the output spectrum over this final normalized-time interval.
+  spectrum_average_time: 5.0
+  # Maximum stationary-LLE residual for reporting a near-stationary result.
+  stationary_tolerance: 1.0e-3
   seed: 7
 
   # Initial field shape: empty or soliton.

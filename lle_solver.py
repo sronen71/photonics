@@ -18,10 +18,11 @@ import numpy as np
 from config_loader import (
     ConfigurationError,
     config_parser,
-    load_physics,
     load_section,
 )
-from dispersion import as_dispersion, load_dispersion, soliton_seed_beta
+from dispersion import as_dispersion, soliton_seed_beta
+from physics import load_solver_physics, normalized_summary
+from spectrum import output_spectrum
 
 
 RESULTS_DIRECTORY = Path("results")
@@ -31,6 +32,8 @@ CONFIGURATION_KEYS = {
     "dt",
     "initial_noise",
     "snapshots",
+    "spectrum_average_time",
+    "stationary_tolerance",
     "seed",
     "initial_shape",
     "operation_mode",
@@ -211,15 +214,37 @@ def solve_lle(
     return theta, np.asarray(saved_times), np.asarray(saved_fields)
 
 
+def stationary_residual(amplitude, alpha, forcing, beta):
+    """Return the stationary-LLE residual of one field snapshot."""
+    spatial_points = amplitude.size
+    mode_number = np.fft.fftfreq(spatial_points, d=1.0 / spatial_points)
+    modal_dispersion = as_dispersion(beta).values(mode_number)
+    dispersed_field = np.fft.ifft(
+        modal_dispersion * np.fft.fft(amplitude)
+    )
+    return (
+        -(1.0 + 1j * alpha) * amplitude
+        + 1j * np.abs(amplitude) ** 2 * amplitude
+        + 1j * dispersed_field
+        + forcing
+    )
+
+
 def save_figure(
     theta, times, fields, alpha: float, forcing: complex, beta: float,
-    alpha_start=None,
+    alpha_start=None, physics=None, spectrum_average_time=5.0,
 ) -> None:
-    """Save space-time field magnitude, final profile, and mode amplitudes."""
+    """Save the field evolution, final profile, and averaged output spectrum."""
     magnitude = np.abs(fields)
     final_field = fields[-1]
-    mode_numbers = np.fft.fftshift(np.fft.fftfreq(theta.size, d=1.0 / theta.size))
-    spectrum = np.abs(np.fft.fftshift(np.fft.fft(final_field))) / theta.size
+    spectrum_start = times[-1] - spectrum_average_time
+    spectrum_indices = np.flatnonzero(times >= spectrum_start)
+    if spectrum_indices.size < 2:
+        spectrum_indices = np.arange(max(0, times.size - 2), times.size)
+    spectrum_times = times[spectrum_indices]
+    plotted_output = output_spectrum(
+        fields[spectrum_indices], physics=physics, times=spectrum_times
+    )
 
     figure = plt.figure(figsize=(10, 9))
     grid = figure.add_gridspec(2, 2, height_ratios=(1.45, 1.0))
@@ -249,16 +274,21 @@ def save_figure(
     profile_axis.grid(alpha=0.25)
     profile_axis.legend()
 
-    positive = spectrum[spectrum > 0.0]
-    floor = positive.max() * 1e-12 if positive.size else 1e-12
     spectrum_axis.scatter(
-        mode_numbers, np.maximum(spectrum, floor), color="tab:red", s=9
+        plotted_output["axis"],
+        plotted_output["power_db"],
+        color="tab:green",
+        s=9,
     )
-    spectrum_axis.set_yscale("log")
-    spectrum_axis.set_xlim(mode_numbers.min(), mode_numbers.max())
-    spectrum_axis.set_xlabel("Spatial mode number")
-    spectrum_axis.set_ylabel("Mode amplitude")
-    spectrum_axis.set_title("Final mode amplitudes")
+    spectrum_axis.set_xlim(
+        plotted_output["axis"].min(), plotted_output["axis"].max()
+    )
+    spectrum_axis.set_xlabel(plotted_output["axis_label"])
+    spectrum_axis.set_ylabel(plotted_output["power_label"])
+    spectrum_axis.set_title(
+        plotted_output["title"]
+        + rf" (average $t={spectrum_times[0]:g}$ to ${spectrum_times[-1]:g}$)"
+    )
     spectrum_axis.grid(alpha=0.25)
 
     alpha_text = (
@@ -273,6 +303,14 @@ def save_figure(
     )
     figure.tight_layout()
     RESULTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    spectrum_results = dict(plotted_output["saved"])
+    spectrum_results.update(
+        spectrum_average_start=spectrum_times[0],
+        spectrum_average_end=spectrum_times[-1],
+    )
+    np.savez(
+        RESULTS_DIRECTORY / "lle_output_spectrum.npz", **spectrum_results
+    )
     figure.savefig(
         RESULTS_DIRECTORY / "spatial_lle_response.png",
         dpi=300,
@@ -285,15 +323,16 @@ def main() -> None:
     parser = config_parser(__doc__)
     command_line = parser.parse_args()
     try:
-        physics = load_physics(command_line.config)
-        dispersion = load_dispersion(physics, command_line.config)
+        physics = load_solver_physics(command_line.config)
+        dispersion = physics.dispersion
         arguments = load_section(command_line.config, "lle", CONFIGURATION_KEYS)
-        arguments.alpha = float(physics.alpha)
-        arguments.f_real = float(physics.f_real)
+        arguments.alpha = physics.alpha
         for name in (
             "final_time",
             "dt",
             "initial_noise",
+            "spectrum_average_time",
+            "stationary_tolerance",
             "scan_alpha_start",
             "scan_time",
         ):
@@ -319,14 +358,30 @@ def main() -> None:
     if (
         arguments.initial_noise < 0.0
         or arguments.snapshots < 1
+        or arguments.spectrum_average_time <= 0.0
+        or arguments.spectrum_average_time > arguments.final_time
+        or arguments.stationary_tolerance <= 0.0
     ):
         parser.error(
-            "lle.initial_noise must be nonnegative and snapshots must be "
-            "positive"
+            "lle.initial_noise must be nonnegative; snapshots and "
+            "stationary_tolerance must be positive; spectrum_average_time "
+            "must be positive and no greater than final_time"
         )
 
     print("Solving spatial equation...", flush=True)
-    forcing = complex(arguments.f_real)
+    forcing = physics.forcing
+    if physics.units == "SI":
+        print(
+            "Converted physical input to normalized LLE: "
+            + normalized_summary(physics),
+            flush=True,
+        )
+        print(
+            "One normalized time unit is "
+            f"{physics.physical_time_per_normalized_unit_s:.6g} s; "
+            f"FSR={physics.fsr_hz:g} Hz",
+            flush=True,
+        )
     theta_grid = np.linspace(
         0.0, 2.0 * np.pi, arguments.spatial_points, endpoint=False
     )
@@ -360,6 +415,22 @@ def main() -> None:
         initial_background=initial_background,
         alpha_schedule=alpha_schedule,
     )
+    final_residual = float(np.max(np.abs(stationary_residual(
+        fields[-1], arguments.alpha, forcing, dispersion
+    ))))
+    if final_residual <= arguments.stationary_tolerance:
+        print(
+            "Final state is close to stationary: yes; "
+            f"maximum residual={final_residual:.3e}",
+            flush=True,
+        )
+    else:
+        print(
+            "Final state is close to stationary: no; "
+            f"maximum residual={final_residual:.3e} exceeds tolerance="
+            f"{arguments.stationary_tolerance:.3e}",
+            flush=True,
+        )
     print("Saving figure...", flush=True)
     save_figure(
         theta,
@@ -369,6 +440,8 @@ def main() -> None:
         forcing,
         dispersion,
         alpha_start=alpha_start,
+        physics=physics,
+        spectrum_average_time=arguments.spectrum_average_time,
     )
     print("Figure saved.", flush=True)
 

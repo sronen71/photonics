@@ -7,8 +7,26 @@ from types import SimpleNamespace
 import yaml
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
-PHYSICS_KEYS = {"alpha", "f_real", "beta", "dispersion_csv"}
+DEFAULT_CONFIG_PATH = Path(__file__).with_name("configs") / "config.yaml"
+NORMALIZED_PHYSICS_KEYS = {
+    "units",
+    "alpha",
+    "f_real",
+    "beta",
+    "dispersion_csv",
+}
+PHYSICAL_PHYSICS_KEYS = {
+    "units",
+    "kappa_rad_s",
+    "kappa_external_rad_s",
+    "omega_0_rad_s",
+    "omega_pump_rad_s",
+    "fsr_hz",
+    "g_0_rad_s",
+    "pump_power_w",
+    "d2_rad_s",
+    "dispersion_csv",
+}
 
 
 class ConfigurationError(ValueError):
@@ -22,7 +40,7 @@ def config_parser(description: str) -> argparse.ArgumentParser:
         "--config",
         type=Path,
         default=DEFAULT_CONFIG_PATH,
-        help=f"YAML configuration file (default: {DEFAULT_CONFIG_PATH.name})",
+        help=f"YAML configuration file (default: {DEFAULT_CONFIG_PATH})",
     )
     return parser
 
@@ -61,7 +79,7 @@ def load_section(path: Path, section_name: str, expected_keys) -> SimpleNamespac
 
 
 def load_physics(path: Path) -> SimpleNamespace:
-    """Load physics with either scalar beta or an external dispersion CSV."""
+    """Load either normalized or dimensional physical LLE parameters."""
     try:
         with path.open("r", encoding="utf-8") as stream:
             document = yaml.safe_load(stream)
@@ -76,9 +94,32 @@ def load_physics(path: Path) -> SimpleNamespace:
     if not isinstance(section, dict):
         raise ConfigurationError(f"{path} must contain a 'physics' mapping")
 
+    units = section.get("units", "normalized")
+    if units not in {"normalized", "SI"}:
+        raise ConfigurationError(
+            "physics.units must be either normalized or SI"
+        )
+
     supplied = set(section)
-    unknown = sorted(supplied - PHYSICS_KEYS)
-    missing = sorted({"alpha", "f_real"} - supplied)
+    if units == "normalized":
+        allowed = NORMALIZED_PHYSICS_KEYS
+        required = {"alpha", "f_real"}
+        dispersion_choices = {"beta", "dispersion_csv"}
+    else:
+        allowed = PHYSICAL_PHYSICS_KEYS
+        required = {
+            "kappa_rad_s",
+            "kappa_external_rad_s",
+            "omega_0_rad_s",
+            "omega_pump_rad_s",
+            "fsr_hz",
+            "g_0_rad_s",
+            "pump_power_w",
+        }
+        dispersion_choices = {"d2_rad_s", "dispersion_csv"}
+
+    unknown = sorted(supplied - allowed)
+    missing = sorted(required - supplied)
     if missing:
         raise ConfigurationError(
             f"section 'physics' is missing: {', '.join(missing)}"
@@ -87,9 +128,12 @@ def load_physics(path: Path) -> SimpleNamespace:
         raise ConfigurationError(
             f"section 'physics' has unknown settings: {', '.join(unknown)}"
         )
-    choices = supplied & {"beta", "dispersion_csv"}
+    choices = supplied & dispersion_choices
     if len(choices) != 1:
         raise ConfigurationError(
-            "section 'physics' must contain exactly one of beta or dispersion_csv"
+            "section 'physics' must contain exactly one of "
+            + " or ".join(sorted(dispersion_choices))
         )
-    return SimpleNamespace(**section)
+    values = dict(section)
+    values["units"] = units
+    return SimpleNamespace(**values)

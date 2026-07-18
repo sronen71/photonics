@@ -70,12 +70,12 @@ def _csv_rows(path):
     return fieldnames, rows
 
 
-def _load_polynomial(path, rows):
+def _load_polynomial(path, rows, coefficient_name="beta", scale=1.0):
     coefficients = {}
     for row_number, row in rows:
         try:
             order = int(row["order"])
-            coefficient = float(row["beta"])
+            coefficient = scale * float(row[coefficient_name])
         except (KeyError, TypeError, ValueError):
             raise ConfigurationError(
                 f"invalid polynomial dispersion at {path}:{row_number}"
@@ -103,12 +103,12 @@ def _load_polynomial(path, rows):
     )
 
 
-def _load_grid(path, rows):
+def _load_grid(path, rows, scale=1.0):
     points = []
     for row_number, row in rows:
         try:
             mode_number = float(row["k"])
-            value = float(row["dispersion"])
+            value = scale * float(row["dispersion"])
         except (KeyError, TypeError, ValueError):
             raise ConfigurationError(
                 f"invalid gridded dispersion at {path}:{row_number}"
@@ -162,17 +162,32 @@ def load_dispersion(physics, config_path):
         except (TypeError, ValueError):
             raise ConfigurationError("physics.beta must be a finite number") from None
 
+    if hasattr(physics, "d2_rad_s"):
+        return quadratic_dispersion(
+            -2.0 * float(physics.d2_rad_s) / float(physics.kappa_rad_s)
+        )
+
+    physical_input = getattr(physics, "units", "normalized") == "SI"
+    scale = -2.0 / float(physics.kappa_rad_s) if physical_input else 1.0
+    coefficient_name = "d" if physical_input else "beta"
+
     path = Path(physics.dispersion_csv).expanduser()
     if not path.is_absolute():
         path = Path(config_path).resolve().parent / path
     fieldnames, rows = _csv_rows(path)
     fields = set(fieldnames)
-    if fields == {"order", "beta"}:
-        return _load_polynomial(path, rows)
+    if fields == {"order", coefficient_name}:
+        return _load_polynomial(
+            path,
+            rows,
+            coefficient_name=coefficient_name,
+            scale=scale,
+        )
     if fields == {"k", "dispersion"}:
-        return _load_grid(path, rows)
+        return _load_grid(path, rows, scale=scale)
+    polynomial_header = f"order,{coefficient_name}"
     raise ConfigurationError(
-        f"dispersion CSV {path} must have either 'order,beta' or "
+        f"dispersion CSV {path} must have either '{polynomial_header}' or "
         "'k,dispersion' columns"
     )
 

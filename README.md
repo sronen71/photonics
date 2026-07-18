@@ -28,6 +28,40 @@ $$
 For the default quadratic model, $D(k)=\beta k^2/2$, so this is identical to
 the equation above.
 
+They can also start from the dimensional photon-amplitude equation
+
+$$
+\frac{\partial a}{\partial t_{\mathrm{phys}}}
+=-\left(\frac{\kappa}{2}+i(\omega_0-\omega_p)\right)a
++ig_0|a|^2a-iD_{\rm int}(-i\partial_\theta)a
++\sqrt{\kappa_{\rm ex}}s_{\rm in},
+\qquad |s_{\rm in}|^2=\frac{P_{\rm in}}{\hbar\omega_p}.
+$$
+
+Here $|a|^2$ is photon number, $\kappa$ is the loaded full-width angular
+linewidth, $\kappa_{\rm ex}$ is its external-coupling contribution, $g_0$ is
+the single-photon Kerr shift, and
+$D_{\rm int}(k)=\omega_k-(\omega_0+2\pi\,\mathrm{FSR}\,k)$.
+
+The internal conversion is
+
+$$
+\tau=\frac{\kappa t_{\rm phys}}{2},\qquad
+A=\sqrt{\frac{2g_0}{\kappa}}a,\qquad
+\alpha=\frac{2(\omega_0-\omega_p)}{\kappa},
+$$
+
+$$
+F=\sqrt{\frac{8g_0\kappa_{\rm ex}P_{\rm in}}
+{\kappa^3\hbar\omega_p}},qquad
+D(k)=-\frac{2D_{\rm int}(k)}{\kappa}.
+$$
+
+For $D_{\rm int}(k)=D_2k^2/2$, this gives
+$\beta=-2D_2/\kappa$. The FSR establishes the co-rotating frame and therefore
+cancels from the normalized dynamics, but it is retained for physical
+interpretation.
+
 This is the convention of Godey et al.: $t=\kappa t_{\mathrm{physical}}/2$,
 where $\kappa$ is the loaded-cavity linewidth; positive $\alpha$ is red pump
 detuning; and $\beta<0$ is anomalous dispersion.
@@ -46,7 +80,7 @@ python3 -m pip install -r requirements.txt
 
 ## Examples
 
-Edit `config.yaml`, then run a solver without parameter flags. The `physics`
+Edit `configs/config.yaml`, then run a solver without parameter flags. The `physics`
 section supplies the shared detuning, pump, and dispersion used by both the
 `lle` and `steady` solvers; their numerical settings remain in separate
 sections.
@@ -58,6 +92,7 @@ an external relation, replace `beta` with a CSV path:
 
 ```yaml
 physics:
+  units: normalized
   alpha: 4.0
   f_real: 2.0
   dispersion_csv: dispersion.csv
@@ -100,6 +135,54 @@ $D(1)-2D(0)+D(-1)$. This coefficient must be negative when `initial_shape` is
 `soliton` and for the steady solver's bright-soliton seed; the actual solve
 always uses the complete CSV relation.
 
+### Physical parameters
+
+Set `physics.units` to `SI` to derive the normalized detuning, pump, and
+dispersion internally:
+
+```yaml
+physics:
+  units: SI
+  kappa_rad_s: 1.0e9
+  kappa_external_rad_s: 5.0e8
+  omega_0_rad_s: 1.2e15
+  omega_pump_rad_s: 1.199998e15
+  fsr_hz: 1.0e11
+  g_0_rad_s: 6.0
+  pump_power_w: 0.0211
+  d2_rad_s: 1.0e7
+```
+
+All quantities with the `_rad_s` suffix are angular frequencies in rad/s;
+`fsr_hz` is in Hz and `pump_power_w` is in watts. `kappa_rad_s` is the total
+loaded linewidth, not the half-width. The complete runnable example
+`configs/config_physical.yaml` maps to approximately the same
+`alpha: 4`, `F: 2`, and `beta: -0.02` as the default normalized configuration:
+
+```bash
+python3 lle_solver.py --config configs/config_physical.yaml
+python3 steady_solver.py --config configs/config_physical.yaml
+```
+
+For physical polynomial dispersion, replace `d2_rad_s` with
+`dispersion_csv` and use dimensional $D_n$ coefficients in rad/s:
+
+```csv
+order,d
+2,1.0e7
+3,2500.0
+```
+
+This defines $D_{\rm int}(k)=\sum_n D_nk^n/n!$. A physical grid keeps the
+same `k,dispersion` header described above, but its `dispersion` values are
+dimensional $D_{\rm int}(k)$ in rad/s. Do not include the FSR term in either
+CSV representation. Relative CSV paths are resolved beside the YAML file.
+
+The `lle` times (`dt`, `final_time`, `scan_time`, and
+`spectrum_average_time`) remain normalized times. For `physics.units: SI`,
+each solver prints the corresponding seconds per
+normalized time unit, $2/\kappa$.
+
 Plot the uniform response curves (`uniform` section):
 
 ```bash
@@ -112,17 +195,42 @@ Integrate the time-dependent LLE (`lle` section):
 python3 lle_solver.py
 ```
 
+The time-dependent output spectrum replaces the former final-snapshot mode
+plot. Each saved field in the final `spectrum_average_time` interval is
+Fourier transformed around the ring, and the resulting powers are averaged in
+time. The default interval is the final 5 normalized time units. SI and
+normalized axes use the same conventions as the steady solver, and the data
+are saved to `results/lle_output_spectrum.npz`.
+
+After integration, the solver also evaluates the stationary LLE residual of
+the final field. It reports whether the maximum residual satisfies
+`lle.stationary_tolerance`; this report does not stop a valid time-dependent
+solution that remains nonstationary.
+
 Find a stationary bright soliton (`steady` section):
 
 ```bash
 python3 steady_solver.py
 ```
 
+The steady-state figure includes the complex field, spatial intensity, and an
+output spectrum. With `physics.units: SI`, the spectrum panel shows
+through-port power in dBm versus optical frequency in THz. It includes
+interference between the input pump and cavity leakage at the pumped mode;
+sidebands contain cavity leakage only. With `physics.units: normalized`, it
+instead shows normalized spectral power in dB versus mode number.
+
+`results/steady_solution.npz` stores the underlying spectrum. SI results use
+`output_frequency_thz`, `output_power_w`, and `output_power_dbm`; normalized
+results use `output_mode_number`, `output_normalized_power`, and
+`output_normalized_power_db`. Exact SI powers are saved in watts before the
+finite plotting floor is applied to the dBm array.
+
 An alternate common configuration file can be selected with the only supported
 parameter flag:
 
 ```bash
-python3 steady_solver.py --config soliton.yaml
+python3 steady_solver.py --config configs/soliton.yaml
 ```
 
 The default physics and initial shape target a dissipative Kerr soliton (DKS).

@@ -20,10 +20,11 @@ from scipy.optimize import NoConvergence, newton_krylov
 from config_loader import (
     ConfigurationError,
     config_parser,
-    load_physics,
     load_section,
 )
-from dispersion import as_dispersion, load_dispersion, soliton_seed_beta
+from dispersion import as_dispersion, soliton_seed_beta
+from physics import load_solver_physics, normalized_summary
+from spectrum import output_spectrum
 
 
 RESULTS_DIRECTORY = Path("results")
@@ -175,7 +176,16 @@ def solve_stationary(
     return solution, maximum_residual, iteration_count
 
 
-def save_results(theta, amplitude, alpha, forcing, beta, residual, iterations):
+def save_results(
+    theta,
+    amplitude,
+    alpha,
+    forcing,
+    beta,
+    residual,
+    iterations,
+    physics=None,
+):
     """Save the stationary field, magnitude profile, and mode amplitudes."""
     dispersion_relation = as_dispersion(beta)
     RESULTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
@@ -191,9 +201,9 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual, iterations):
     dispersion_values = np.fft.fftshift(
         dispersion_relation.values(unshifted_mode_number)
     )
+    plotted_output = output_spectrum(amplitude, physics)
 
-    np.savez(
-        RESULTS_DIRECTORY / "steady_solution.npz",
+    saved_results = dict(
         theta=theta,
         amplitude=amplitude,
         magnitude=magnitude,
@@ -217,12 +227,14 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual, iterations):
         maximum_residual=residual,
         newton_iterations=iterations,
     )
+    saved_results.update(plotted_output["saved"])
+    np.savez(RESULTS_DIRECTORY / "steady_solution.npz", **saved_results)
 
     figure = plt.figure(figsize=(11, 9))
     grid = figure.add_gridspec(2, 2, height_ratios=(1.15, 1.0))
     profile_axis = figure.add_subplot(grid[0, :])
     intensity_axis = figure.add_subplot(grid[1, 0])
-    spectrum_axis = figure.add_subplot(grid[1, 1])
+    output_axis = figure.add_subplot(grid[1, 1])
     profile_axis.plot(
         theta, amplitude.real, color="tab:blue", linewidth=2,
         label=r"$\mathrm{Re}(A)$",
@@ -245,17 +257,19 @@ def save_results(theta, amplitude, alpha, forcing, beta, residual, iterations):
     intensity_axis.set_title("Stationary intensity")
     intensity_axis.grid(alpha=0.25)
 
-    positive = mode_power[mode_power > 0.0]
-    floor = positive.max() * 1e-12 if positive.size else 1e-12
-    spectrum_axis.scatter(
-        mode_number, np.maximum(mode_power, floor), color="tab:red", s=9
+    output_axis.scatter(
+        plotted_output["axis"],
+        plotted_output["power_db"],
+        color="tab:green",
+        s=9,
     )
-    spectrum_axis.set_yscale("log")
-    spectrum_axis.set_xlim(mode_number.min(), mode_number.max())
-    spectrum_axis.set_xlabel("Azimuthal mode number")
-    spectrum_axis.set_ylabel("Mode power")
-    spectrum_axis.set_title("Stationary mode power")
-    spectrum_axis.grid(alpha=0.25)
+    output_axis.set_xlim(
+        plotted_output["axis"].min(), plotted_output["axis"].max()
+    )
+    output_axis.set_xlabel(plotted_output["axis_label"])
+    output_axis.set_ylabel(plotted_output["power_label"])
+    output_axis.set_title(plotted_output["title"])
+    output_axis.grid(alpha=0.25)
 
     figure.suptitle(
         rf"$\alpha={alpha:g}$, $F={forcing.real:g}$, "
@@ -275,13 +289,12 @@ def main():
     parser = config_parser(__doc__)
     command_line = parser.parse_args()
     try:
-        physics = load_physics(command_line.config)
-        dispersion = load_dispersion(physics, command_line.config)
+        physics = load_solver_physics(command_line.config)
+        dispersion = physics.dispersion
         arguments = load_section(
             command_line.config, "steady", CONFIGURATION_KEYS
         )
-        arguments.alpha = float(physics.alpha)
-        arguments.f_real = float(physics.f_real)
+        arguments.alpha = physics.alpha
         arguments.tolerance = float(arguments.tolerance)
         for name in ("spatial_points", "max_iterations"):
             setattr(arguments, name, int(getattr(arguments, name)))
@@ -297,7 +310,19 @@ def main():
             "max_iterations must be positive"
         )
 
-    forcing = complex(arguments.f_real)
+    forcing = physics.forcing
+    if physics.units == "SI":
+        print(
+            "Converted physical input to normalized LLE: "
+            + normalized_summary(physics),
+            flush=True,
+        )
+        print(
+            "One normalized time unit is "
+            f"{physics.physical_time_per_normalized_unit_s:.6g} s; "
+            f"FSR={physics.fsr_hz:g} Hz",
+            flush=True,
+        )
     print("Generating stationary initial guess...", flush=True)
     theta_grid = np.linspace(
         0.0, 2.0 * np.pi, arguments.spatial_points, endpoint=False
@@ -330,6 +355,7 @@ def main():
         dispersion,
         residual,
         iterations,
+        physics=physics,
     )
     print("Results saved.", flush=True)
 
