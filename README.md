@@ -71,7 +71,10 @@ Run the scalar-LLE physics benchmarks with
 python3 -m unittest discover -s tests -v
 ```
 
-The benchmarks check the following literature predictions:
+The benchmarks separate exact consequences of the normalized LLE from
+large-detuning asymptotic checks.
+
+Exact benchmarks:
 
 - The homogeneous response
   `|F|^2 = I [1 + (alpha - I)^2]`, including the bistability cusp at
@@ -81,9 +84,17 @@ The benchmarks check the following literature predictions:
 - The modulational-instability gain of the `alpha=1`, `beta=-0.04`, `I=1.2`
   example in Godey et al. The test seeds the unstable eigenvector at mode 8 and
   measures its exponential growth rate.
-- The large-detuning bright-soliton laws `I_peak approximately 2*alpha` and
-  `FWHM approximately 2*arcosh(sqrt(2))*sqrt(|beta|/(2*alpha))`, followed by an
-  independent time-domain check that the stationary pulse remains stationary.
+
+Asymptotic consistency check:
+
+- Coen and Erkintalo's large-detuning bright-soliton laws
+  `I_peak approximately 2*alpha` and
+  `FWHM approximately 2*arcosh(sqrt(2))*sqrt(|beta|/(2*alpha))`. These are not
+  exact finite-detuning LLE solutions. At `alpha=10`, `F=sqrt(10)`, and
+  `beta=-0.2`, the spatially converged stationary solution has peak intensity
+  `21.090354` versus the asymptotic value `20`, and background-subtracted pulse
+  FWHM `0.172077` versus `0.176275`. The independent time-domain solver then
+  checks that this numerical stationary solution remains stationary.
 
 Primary references:
 
