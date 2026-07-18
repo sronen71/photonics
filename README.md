@@ -303,6 +303,9 @@ Asymptotic consistency check:
 
 Primary references:
 
+The exact publicly available author-manuscript PDFs used for these benchmarks
+are indexed in [docs/LLE_REFERENCES.md](docs/LLE_REFERENCES.md).
+
 - C. Godey et al., [Stability analysis of the spatiotemporal
   Lugiato--Lefever model](https://doi.org/10.1103/PhysRevA.89.063814),
   Phys. Rev. A 89, 063814 (2014).
