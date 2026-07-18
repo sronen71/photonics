@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from spectral import mode_numbers
+
 
 @dataclass(frozen=True)
 class DriftDiagnostics:
@@ -33,9 +35,46 @@ class DriftDiagnostics:
 def spectral_derivative(field):
     """Differentiate a complex periodic field with respect to ring angle."""
     field = np.asarray(field)
-    mode_number = np.fft.fftfreq(field.shape[-1], d=1.0 / field.shape[-1])
+    mode_number = mode_numbers(field.shape[-1])
     return np.fft.ifft(
         1j * mode_number * np.fft.fft(field, axis=-1), axis=-1
+    )
+
+
+def translation_gauge(reference_fields):
+    """Return a normalized tangent for fixing a periodic translation.
+
+    ``reference_fields`` may contain one field or several fields sharing the
+    same ring coordinate.  The returned direction is the tangent to their
+    common translation orbit.  A phase condition formed with this direction
+    removes the neutral shift mode without choosing a preferred physical
+    position on the ring.
+    """
+    reference = np.asarray(reference_fields, dtype=complex)
+    if reference.ndim < 1 or reference.shape[-1] < 2:
+        raise ValueError("a translation gauge requires periodic field samples")
+    tangent = spectral_derivative(reference)
+    tangent_rms = float(np.sqrt(np.mean(np.abs(tangent) ** 2)))
+    field_rms = float(np.sqrt(np.mean(np.abs(reference) ** 2)))
+    uniform_threshold = (
+        np.sqrt(np.finfo(float).eps) * max(1.0, field_rms)
+    )
+    if tangent_rms <= uniform_threshold:
+        raise ValueError(
+            "a translation gauge requires a nonuniform reference field"
+        )
+    return reference.copy(), tangent / tangent_rms
+
+
+def translation_phase_condition(fields, reference, direction):
+    """Return the real orthogonality condition that fixes translation."""
+    fields = np.asarray(fields, dtype=complex)
+    reference = np.asarray(reference, dtype=complex)
+    direction = np.asarray(direction, dtype=complex)
+    if fields.shape != reference.shape or direction.shape != reference.shape:
+        raise ValueError("translation-gauge fields must have matching shapes")
+    return float(
+        np.real(np.vdot(direction, fields - reference)) / reference.size
     )
 
 
@@ -51,7 +90,7 @@ def translate_fields(fields, shift):
         squeeze = False
     if fields.ndim != 2 or shift.shape != (fields.shape[0],):
         raise ValueError("fields and shifts must have compatible time axes")
-    mode_number = np.fft.fftfreq(fields.shape[1], d=1.0 / fields.shape[1])
+    mode_number = mode_numbers(fields.shape[1])
     translated = np.fft.ifft(
         np.fft.fft(fields, axis=1)
         * np.exp(1j * shift[:, None] * mode_number[None, :]),

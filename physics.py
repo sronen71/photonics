@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from config_loader import ConfigurationError, load_physics
+from config_loader import ConfigurationError, finite_float, load_physics
 from dispersion import DispersionRelation, load_dispersion
 
 
@@ -35,22 +35,12 @@ class SolverPhysics:
         return 2.0 / self.kappa_rad_s
 
 
-def _finite_float(value, name):
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        raise ConfigurationError(f"physics.{name} must be a number") from None
-    if not np.isfinite(value):
-        raise ConfigurationError(f"physics.{name} must be finite")
-    return value
-
-
 def load_solver_physics(config_path):
     """Load physics and return its normalized solver representation."""
     physics = load_physics(config_path)
     if physics.units == "normalized":
-        alpha = _finite_float(physics.alpha, "alpha")
-        forcing = _finite_float(physics.f_real, "f_real")
+        alpha = finite_float(physics.alpha, "physics.alpha")
+        forcing = finite_float(physics.f_real, "physics.f_real")
         if forcing < 0.0:
             raise ConfigurationError("physics.f_real must be nonnegative")
         dispersion = load_dispersion(physics, config_path)
@@ -61,17 +51,17 @@ def load_solver_physics(config_path):
             units="normalized",
         )
 
-    kappa = _finite_float(physics.kappa_rad_s, "kappa_rad_s")
-    kappa_external = _finite_float(
-        physics.kappa_external_rad_s, "kappa_external_rad_s"
+    kappa = finite_float(physics.kappa_rad_s, "physics.kappa_rad_s")
+    kappa_external = finite_float(
+        physics.kappa_external_rad_s, "physics.kappa_external_rad_s"
     )
-    omega_0 = _finite_float(physics.omega_0_rad_s, "omega_0_rad_s")
-    omega_pump = _finite_float(
-        physics.omega_pump_rad_s, "omega_pump_rad_s"
+    omega_0 = finite_float(physics.omega_0_rad_s, "physics.omega_0_rad_s")
+    omega_pump = finite_float(
+        physics.omega_pump_rad_s, "physics.omega_pump_rad_s"
     )
-    fsr_hz = _finite_float(physics.fsr_hz, "fsr_hz")
-    g_0 = _finite_float(physics.g_0_rad_s, "g_0_rad_s")
-    pump_power = _finite_float(physics.pump_power_w, "pump_power_w")
+    fsr_hz = finite_float(physics.fsr_hz, "physics.fsr_hz")
+    g_0 = finite_float(physics.g_0_rad_s, "physics.g_0_rad_s")
+    pump_power = finite_float(physics.pump_power_w, "physics.pump_power_w")
 
     positive = {
         "kappa_rad_s": kappa,

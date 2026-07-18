@@ -47,3 +47,34 @@ were combined in the published Physical Review A article.
 - Published article: [Opt. Lett. 39, 2971](https://doi.org/10.1364/OL.39.002971)
 - Benchmark: third-order-dispersion stabilization of a moving cavity soliton
 - SHA-256: `570c02a5347a307f5bc2dfa90ead45c1960e7e021ae2160da3e2a81139ff8f86`
+
+## Zang et al. (2025), bidirectional PhCR circuit
+
+- Local author manuscript: [Jizhao2401.16740v1.pdf](Jizhao2401.16740v1.pdf)
+- Local published supplement:
+  [Jizhao2024-supplemental.pdf](Jizhao2024-supplemental.pdf)
+- Author manuscript: [arXiv:2401.16740v1](https://arxiv.org/abs/2401.16740v1)
+- Published article: [Nature Photonics 19, 510--517](https://doi.org/10.1038/s41566-025-01624-1)
+- Benchmarks: bidirectional coupled LLE, finite-band reflector, input-output
+  power conservation, one-sided high-efficiency soliton, and reflector-phase
+  contrast in Figs. 1e and S2
+- Main-manuscript SHA-256:
+  `ea624b3a2e9af9b4dad66737455a3b36565531a6fb0d0276a5bfe42b9eb21b17`
+- Supplement SHA-256:
+  `9c7fa29440756c35d798754d7b8d1ee81ef2695ab6bf490c37f7f6963a0dd3a1`
+
+The arXiv manuscript predates the 2025 version of record. The local supplement
+is the publisher-provided supplementary information for the final article.
+
+## Liu et al. (2024), PhCR phase-convention cross-check
+
+- NIST author copy: [publication PDF](https://tsapps.nist.gov/publication/get_pdf.cfm?pub_id=936538)
+- Published article: [Phys. Rev. Lett. 132, 023801](https://doi.org/10.1103/PhysRevLett.132.023801)
+- Cross-check: the displayed coupled LLE gives an antisymmetric red split mode,
+  $E^f_0\simeq-E^b_0$, and the analysis identifies maximum saturated conversion
+  at $r=-1$, or equation phase $\Phi=\pi$
+
+This fixes the modal phase convention independently of the soliton benchmark.
+The 2025 paper plots its constructive device-relative phase as zero while
+retaining the same equation signs and $r=\sqrt R\exp(i\phi)$, so its plotted
+phase axis is shifted by $\pi$ relative to the literal equation phase.

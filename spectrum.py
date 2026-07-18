@@ -3,9 +3,10 @@
 import numpy as np
 
 from physics import HBAR_J_S
+from spectral import mode_numbers
 
 
-def _time_average(values, times):
+def time_average(values, times=None):
     """Average sampled values, accounting for unequal sample intervals."""
     if values.shape[0] == 1:
         return values[0]
@@ -40,15 +41,13 @@ def output_spectrum(fields, physics=None, times=None, drift_velocity=0.0):
         raise ValueError("spectrum drift velocity must be finite")
 
     spatial_points = fields.shape[1]
-    mode_number = np.fft.fftshift(
-        np.fft.fftfreq(spatial_points, d=1.0 / spatial_points)
-    )
+    mode_number = np.fft.fftshift(mode_numbers(spatial_points))
     modal_amplitude = np.fft.fftshift(
         np.fft.fft(fields, axis=-1), axes=-1
     ) / spatial_points
 
     if physics is None or physics.units == "normalized":
-        normalized_power = _time_average(
+        normalized_power = time_average(
             np.abs(modal_amplitude) ** 2, times
         )
         positive = normalized_power[normalized_power > 0.0]
@@ -102,7 +101,7 @@ def output_spectrum(fields, physics=None, times=None, drift_velocity=0.0):
     instantaneous_power_w = (
         HBAR_J_S * optical_omega[None, :] * np.abs(output_wave) ** 2
     )
-    output_power_w = _time_average(instantaneous_power_w, times)
+    output_power_w = time_average(instantaneous_power_w, times)
     positive = output_power_w[output_power_w > 0.0]
     floor_w = max(positive.max() * 1e-15, 1e-18) if positive.size else 1e-18
     output_power_dbm = 10.0 * np.log10(

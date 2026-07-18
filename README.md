@@ -261,9 +261,132 @@ In the LLE section, `initial_shape` selects `empty` or `soliton` independently
 of the `direct` or `scan` `operation_mode`. The steady solver always starts
 from the soliton seed before Newton--Krylov refinement.
 
+## Bidirectional PhCR circuit
+
+`bidirectional_solver.py` implements the coupled forward/backward model used
+by Zang et al. for a photonic-crystal resonator (PhCR) followed by a finite-band
+waveguide reflector. In this repository's modal-dispersion notation, the model
+is
+
+$$
+\dot E^f_\mu=-(1+i\alpha)E^f_\mu+iD(\mu)E^f_\mu
++i\mathcal F(|E^f|^2E^f)_\mu+2iP_bE^f_\mu
++\delta_{\mu0}\left(F-\frac{i\epsilon_{\rm PhC}}2E^b_0\right),
+$$
+
+$$
+\dot E^b_\mu=-(1+i\alpha)E^b_\mu+iD(\mu)E^b_\mu
++i\mathcal F(|E^b|^2E^b)_\mu+2iP_fE^b_\mu
++\delta_{\mu0}\left(rF-\frac{i\epsilon_{\rm PhC}}2E^f_0\right)
+-I_\Omega(\mu)\gamma rE^f_\mu,
+$$
+
+where $P_{f,b}=\sum_j|E^{f,b}_j|^2$,
+$\gamma=2K/(K+1)$, and $I_\Omega$ restricts reflection to the configured
+mode band. The reflector coefficient is
+$r=\sqrt R\exp(i\phi)$, exactly as it appears in the displayed equation.
+
+The implementation keeps this repository's sign conventions. Positive
+$\alpha=2(\omega_0-\omega_p)/\kappa$ is red pump detuning, and
+$D(\mu)=\beta_2\mu^2/2=-d_2\mu^2/2$, so a dimensional coefficient is converted
+with $\beta_2=-2D_2/\kappa$. This matches the displayed evolution equation and
+positive-detuning scans in the paper while avoiding the opposite detuning sign
+printed in its prose definition.
+
+Run the paper benchmark configuration with
+
+```bash
+python3 bidirectional_solver.py
+```
+
+There is a $\pi$ inconsistency between the paper's displayed equation and its
+plotted phase label. The linear pump matrix in that equation is
+$-(1+i\alpha)I-i\epsilon_{\rm PhC}\sigma_x/2$. At the red split resonance
+$\alpha=+\epsilon_{\rm PhC}/2$, its resonant eigenvector is proportional to
+$(1,-1)$. Since the external drive is proportional to $(1,r)$, that red mode
+is driven constructively by $r<0$, or equation phase $\phi=\pi$, while
+$\phi=0$ drives the other split mode. The same group's preceding theory states
+explicitly that the red mode has $E^f_0\simeq-E^b_0$ and maximum conversion at
+$r=-1$ ([Liu et al., 2024](https://doi.org/10.1103/PhysRevLett.132.023801)).
+The newer paper instead calls the constructive fabricated-device setting
+$\phi=0$ but retains $r=\sqrt R\exp(i\phi)$ and the same negative coupling
+sign. Thus its plotted device phase and literal equation phase differ by
+$\pi$.
+
+The configuration and code use the literal equation phase, with
+`reflector_phase: pi`; no fitted phase-reference parameter is present. The
+default starts from noise, scans to $\alpha=6.98$, time-averages both external
+ports, and refines the final state with the phase-conditioned even-dispersion
+solver. The localized refinement includes a translational phase condition:
+this removes the neutral freedom to place the same pulse anywhere on the ring
+while retaining the physical even-dispersion velocity $v=0$. It produces a
+stable, predominantly backward comb with about 0.608
+pump-to-comb conversion efficiency and about 0.013 remaining pump power.
+Setting the literal equation phase to zero suppresses the comb by more than a
+factor of 20 in the physics benchmark. This is a reconstruction after a
+derived $\pi$ relabeling of the paper's plotted phase axis, not a fit of an
+additional physical parameter. The configured $R=0.97$ is the upper end of the
+paper's reported measured range.
+
+### Standalone Supplementary Figure S1 reconstruction
+
+Run the detuning scan used to reconstruct all three panels of Supplementary
+Fig. S1 with
+
+```bash
+python3 reproduce_figure_s1.py
+```
+
+The script uses the same bidirectional LLE and circuit input-output functions
+as the normal solver. By default it downloads the official
+[Supplementary Figure source data](https://www.nature.com/articles/s41566-025-01624-1#Sec13),
+creates a paper-style figure, overlays the published arrays with the new
+simulation, and writes objective comparison metrics under `results/figure_s1/`.
+Use `--paper-data PATH` for an existing
+`SourceData_Supplemental_Information_S1.xlsx`, or
+`--no-paper-comparison` for an offline simulation-only run.
+
+The paper specifies $K=4.5$ for Fig. 1d/S1, in contrast with the $K=3$
+Fig. 1e/S2 configuration above. It does not publish every S1 simulation input
+or the detuning-scan protocol. The standalone reconstruction therefore labels
+the following choices as inferred rather than reported: $F=2.0$, $R=0.90$, the
+two scan rates, and the deterministic random-noise seed used to access the
+subcritical soliton branch. It uses literal equation phase $\phi=\pi$, which
+is the paper's constructive device phase after the derived phase relabeling.
+
+At the default 256-point resolution, comparison with the official simulated
+source arrays gives backward CE 0.6685 versus 0.6741 at $\alpha=6.98$,
+remaining pump 0.0553 versus 0.0360, collapse detuning 7.5859 versus 7.5600,
+an overall power-trace RMSE of 0.0453, and a 0.909 correlation for the backward
+spectral-evolution map. The selected backward-spectrum median RMSE is 13.3 dB;
+most of that difference is in weak spectral wings. This is a standalone
+quantitative audit, not an additional unit test.
+
+The numerical pieces are intentionally separate:
+
+- `bidirectional.py` contains only the coupled residual and exact split-step
+  subflows.
+- `bidirectional_steady.py` phase-conditions and refines the paper's
+  even-$D_2$, $v=0$ state.
+- `bidirectional_spectrum.py` applies the circuit scattering relations and
+  reports both port spectra, conversion efficiency, pump consumption, and the
+  steady power budget.
+- `integration.py`, `spectral.py`, and `spectrum.time_average` are shared by
+  the scalar and bidirectional solvers.
+
+The runner saves the dynamic histories, the refined steady fields, both port
+spectra, power-flow traces, and residuals in
+`results/bidirectional_lle_output.npz`; its summary figure is
+`results/bidirectional_lle_response.png`. The steady refiner deliberately uses
+$v=0$ after verifying even dispersion. Its auxiliary shift rate only borders
+the translation null mode, and the original fixed-frame residual must still
+meet tolerance. A future bidirectional odd-dispersion extension would instead
+solve for one physical shared drift velocity, as the scalar traveling-state
+solver already does.
+
 ## Physics validation
 
-Run the scalar-LLE physics benchmarks with
+Run all physics benchmarks with
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -299,6 +422,12 @@ Exact benchmarks:
   drift-induced repetition-rate correction.
 - The exact finite-window average power of a freely decaying cavity mode,
   which checks the time-averaged spectrum calculation.
+- The bidirectional PhCR model of Zang et al.: dimensional-dispersion sign
+  conversion, reduction to the scalar LLE when coupling is disabled, exact
+  modal reflector propagation, factor-two cross-phase modulation, steady port
+  energy conservation, the red split-mode phase derivation, the high-efficiency
+  contrast after relabeling the plotted phase axis by $\pi$, and the common
+  translation orbit of the localized steady state.
 
 Asymptotic consistency check:
 
@@ -328,3 +457,9 @@ are indexed in [docs/LLE_REFERENCES.md](docs/LLE_REFERENCES.md).
 - P. Parra-Rivas et al., [Third-order chromatic dispersion stabilizes Kerr
   frequency combs](https://doi.org/10.1364/OL.39.002971), Opt. Lett. 39,
   2971 (2014).
+- J. Zang et al., [Laser power consumption of soliton formation in a
+  bidirectional Kerr resonator](https://doi.org/10.1038/s41566-025-01624-1),
+  Nature Photonics 19, 510--517 (2025).
+- H. Liu et al., [Threshold and laser conversion in nanostructured-resonator
+  parametric oscillators](https://doi.org/10.1103/PhysRevLett.132.023801),
+  Phys. Rev. Lett. 132, 023801 (2024).
