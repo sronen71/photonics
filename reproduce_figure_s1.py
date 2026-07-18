@@ -33,6 +33,7 @@ from bidirectional import (
     solve_bidirectional_lle,
 )
 from bidirectional_spectrum import bidirectional_port_power
+from stochastic import GaussianModalSeed, GaussianModalWienerNoise
 
 
 SOURCE_DATA_URL = (
@@ -65,9 +66,22 @@ SEED_ALPHA = 4.8
 SPLICE_ALPHA = 4.82
 CW_SCAN_RATE = 0.05
 SOLITON_SCAN_RATE = 0.0125
-NOISE_SEED = 0.12
+SOLITON_SEED_RMS_AMPLITUDE = 0.02
+SOLITON_SEED_MODE_WIDTH = 19.0
+SOLITON_SEED_HALF_WIDTH = REFLECTOR_HALF_WIDTH
 SETTLE_TIME = 30.0
-RANDOM_SEED = 7
+SOLITON_RANDOM_SEED = 7
+
+# The paper's exactly symmetric LLE preserves a homogeneous field forever.
+# Its published alpha=4.7 spectrum nevertheless contains weak precursor
+# sidebands, but the supplement does not state how they were seeded.  This
+# explicitly inferred stochastic drive removes that symmetry artifact during
+# the pre-soliton scan.  It is turned off before the localized branch is
+# accessed, and its finite band is the paper's stated reflector band Omega.
+PRECURSOR_NOISE_STRENGTH = 3.0e-5
+PRECURSOR_NOISE_MODE_WIDTH = 3.0
+PRECURSOR_NOISE_HALF_WIDTH = REFLECTOR_HALF_WIDTH
+PRECURSOR_RANDOM_SEED = 8
 
 # Exact display grid in the official S1 workbook.  It rounds to the paper's
 # stated 200 GHz FSR and only affects the plotted optical-frequency axis.
@@ -79,6 +93,7 @@ PUMP_COLOR = "#e34a33"
 FORWARD_COLOR = "#2ca02c"
 BACKWARD_COLOR = "#3f4b9b"
 DB_FLOOR = -120.0
+POWER_FLOOR = 10.0 ** (DB_FLOOR / 10.0)
 
 
 @dataclass(frozen=True)
@@ -91,6 +106,20 @@ class NumericalSettings:
     high_snapshots: int = 1201
 
 
+@dataclass(frozen=True)
+class FigureS1Protocol:
+    """Inferred scan and perturbation settings omitted by the paper."""
+
+    precursor_noise_strength: float = PRECURSOR_NOISE_STRENGTH
+    precursor_noise_mode_width: float = PRECURSOR_NOISE_MODE_WIDTH
+    precursor_noise_half_width: int = PRECURSOR_NOISE_HALF_WIDTH
+    precursor_random_seed: int = PRECURSOR_RANDOM_SEED
+    soliton_seed_rms_amplitude: float = SOLITON_SEED_RMS_AMPLITUDE
+    soliton_seed_mode_width: float = SOLITON_SEED_MODE_WIDTH
+    soliton_seed_half_width: int = SOLITON_SEED_HALF_WIDTH
+    soliton_random_seed: int = SOLITON_RANDOM_SEED
+
+
 def _scan(
     parameters,
     start_alpha,
@@ -101,6 +130,9 @@ def _scan(
     initial_forward,
     initial_backward,
     initial_noise=0.0,
+    initial_modal_seed=None,
+    modal_noise=None,
+    seed=SOLITON_RANDOM_SEED,
 ):
     """Run one monotonic detuning segment from supplied initial fields."""
     duration = (stop_alpha - start_alpha) / rate
@@ -116,10 +148,12 @@ def _scan(
         time_step=settings.time_step,
         initial_noise=initial_noise,
         snapshots=snapshots,
-        seed=RANDOM_SEED,
+        seed=seed,
         initial_forward=initial_forward,
         initial_backward=initial_backward,
         alpha_schedule=schedule,
+        modal_noise=modal_noise,
+        initial_modal_seed=initial_modal_seed,
     )
     return schedule(times), forward, backward
 
@@ -149,7 +183,7 @@ def _port_history(forward, backward, parameters):
     }
 
 
-def simulate_figure_s1(settings):
+def simulate_figure_s1(settings, protocol=FigureS1Protocol()):
     """Run the CW and soliton-access segments and join them by detuning."""
     beta = normalized_beta_2(
         D2_RAD_S,
@@ -176,7 +210,17 @@ def simulate_figure_s1(settings):
         time_step=settings.time_step,
         initial_noise=0.0,
         snapshots=2,
-        seed=RANDOM_SEED,
+        seed=SOLITON_RANDOM_SEED,
+    )
+    precursor_noise = GaussianModalWienerNoise(
+        strength=protocol.precursor_noise_strength,
+        mode_width=protocol.precursor_noise_mode_width,
+        mode_half_width=protocol.precursor_noise_half_width,
+    )
+    soliton_seed = GaussianModalSeed(
+        rms_amplitude=protocol.soliton_seed_rms_amplitude,
+        mode_width=protocol.soliton_seed_mode_width,
+        mode_half_width=protocol.soliton_seed_half_width,
     )
     low_alpha, low_forward, low_backward = _scan(
         parameters,
@@ -187,6 +231,8 @@ def simulate_figure_s1(settings):
         settings.low_snapshots,
         settled_forward[-1],
         settled_backward[-1],
+        modal_noise=precursor_noise,
+        seed=protocol.precursor_random_seed,
     )
     high_alpha, high_forward, high_backward = _scan(
         parameters,
@@ -197,7 +243,8 @@ def simulate_figure_s1(settings):
         settings.high_snapshots,
         low_forward[-1],
         low_backward[-1],
-        initial_noise=NOISE_SEED,
+        initial_modal_seed=soliton_seed,
+        seed=protocol.soliton_random_seed,
     )
 
     low_port = _port_history(low_forward, low_backward, parameters)
@@ -512,6 +559,28 @@ def compare_with_paper(simulation, paper):
 
     paper_comb = reference_power[:, 5]
     simulation_comb = simulation["backward_comb"]
+    precursor_mask = (
+        (reference_alpha >= 3.8) & (reference_alpha <= 5.0)
+    )
+    precursor_comb = np.interp(
+        reference_alpha[precursor_mask],
+        simulation["alpha"],
+        simulation_comb,
+    )
+    precursor_log_rmse = float(
+        np.sqrt(
+            np.mean(
+                np.square(
+                    np.log10(np.maximum(precursor_comb, POWER_FLOOR))
+                    - np.log10(
+                        np.maximum(
+                            paper_comb[precursor_mask], POWER_FLOOR
+                        )
+                    )
+                )
+            )
+        )
+    )
     paper_peak_index = int(np.argmax(paper_comb[compare_mask]))
     paper_indices = np.flatnonzero(compare_mask)
     paper_peak_index = int(paper_indices[paper_peak_index])
@@ -619,6 +688,7 @@ def compare_with_paper(simulation, paper):
     metrics = {
         "curve_rmse": curve_rmse,
         "overall_curve_rmse": overall_curve_rmse,
+        "precursor_backward_comb_log10_rmse": precursor_log_rmse,
         "paper_peak_backward_ce": float(paper_comb[paper_peak_index]),
         "simulation_peak_backward_ce": float(simulation_comb[simulation_peak_index]),
         "paper_peak_alpha": float(reference_alpha[paper_peak_index]),
@@ -736,6 +806,10 @@ def save_comparison_figure(simulation, paper, metrics, output_path):
         f"Power-curve RMSE: {metrics['overall_curve_rmse']:.3f}",
         f"Median backward-spectrum RMSE: "
         f"{metrics['median_backward_spectrum_rmse_db']:.1f} dB",
+        f"Backward RMSE at alpha=4.7: "
+        f"{metrics['selected_spectrum_rmse_db']['4.7']['backward']:.1f} dB",
+        f"Precursor comb log10 RMSE: "
+        f"{metrics['precursor_backward_comb_log10_rmse']:.2f}",
     ]
     summary_axis.text(
         0.02,
@@ -791,7 +865,14 @@ def save_comparison_figure(simulation, paper, metrics, output_path):
     plt.close(figure)
 
 
-def save_outputs(simulation, settings, metrics, output_directory, source_path):
+def save_outputs(
+    simulation,
+    settings,
+    protocol,
+    metrics,
+    output_directory,
+    source_path,
+):
     """Persist reproducible arrays and a human-readable metrics report."""
     output_directory.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -832,8 +913,7 @@ def save_outputs(simulation, settings, metrics, output_directory, source_path):
             "cw_scan_rate": CW_SCAN_RATE,
             "soliton_scan_rate": SOLITON_SCAN_RATE,
             "seed_alpha": SEED_ALPHA,
-            "noise_seed": NOISE_SEED,
-            "random_seed": RANDOM_SEED,
+            **asdict(protocol),
         },
         "numerics": asdict(settings),
         "metrics": metrics,
@@ -874,6 +954,42 @@ def parse_arguments():
         default=0.005,
         help="normalized split-step interval (default: 0.005)",
     )
+    parser.add_argument(
+        "--precursor-noise-strength",
+        type=float,
+        default=PRECURSOR_NOISE_STRENGTH,
+        help=(
+            "inferred pre-soliton modal Wiener strength "
+            f"(default: {PRECURSOR_NOISE_STRENGTH:g}; use 0 to disable)"
+        ),
+    )
+    parser.add_argument(
+        "--precursor-noise-mode-width",
+        type=float,
+        default=PRECURSOR_NOISE_MODE_WIDTH,
+        help=(
+            "Gaussian modal width of the inferred precursor drive "
+            f"(default: {PRECURSOR_NOISE_MODE_WIDTH:g})"
+        ),
+    )
+    parser.add_argument(
+        "--soliton-seed-rms-amplitude",
+        type=float,
+        default=SOLITON_SEED_RMS_AMPLITUDE,
+        help=(
+            "grid-normalized RMS modal seed used to access the soliton branch "
+            f"(default: {SOLITON_SEED_RMS_AMPLITUDE:g})"
+        ),
+    )
+    parser.add_argument(
+        "--soliton-seed-mode-width",
+        type=float,
+        default=SOLITON_SEED_MODE_WIDTH,
+        help=(
+            "Gaussian modal width of the soliton-access seed "
+            f"(default: {SOLITON_SEED_MODE_WIDTH:g})"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -883,13 +999,27 @@ def main():
         raise ValueError("spatial-points must be an even integer of at least 64")
     if arguments.time_step <= 0.0:
         raise ValueError("time-step must be positive")
+    if arguments.precursor_noise_strength < 0.0:
+        raise ValueError("precursor-noise-strength must be nonnegative")
+    if arguments.precursor_noise_mode_width <= 0.0:
+        raise ValueError("precursor-noise-mode-width must be positive")
+    if arguments.soliton_seed_rms_amplitude < 0.0:
+        raise ValueError("soliton-seed-rms-amplitude must be nonnegative")
+    if arguments.soliton_seed_mode_width <= 0.0:
+        raise ValueError("soliton-seed-mode-width must be positive")
     settings = NumericalSettings(
         spatial_points=arguments.spatial_points,
         time_step=arguments.time_step,
     )
+    protocol = FigureS1Protocol(
+        precursor_noise_strength=arguments.precursor_noise_strength,
+        precursor_noise_mode_width=arguments.precursor_noise_mode_width,
+        soliton_seed_rms_amplitude=arguments.soliton_seed_rms_amplitude,
+        soliton_seed_mode_width=arguments.soliton_seed_mode_width,
+    )
 
     print("Running the bidirectional LLE scan for Figure S1...")
-    simulation = simulate_figure_s1(settings)
+    simulation = simulate_figure_s1(settings, protocol)
     reproduction_path = arguments.output_directory / "figure_s1_reproduction.png"
     save_reproduction_figure(simulation, reproduction_path)
 
@@ -912,6 +1042,7 @@ def main():
     save_outputs(
         simulation,
         settings,
+        protocol,
         metrics,
         arguments.output_directory,
         source_path,
@@ -937,6 +1068,14 @@ def main():
         f"paper={metrics['paper_collapse_alpha_at_ce_0_01']:.4f}"
     )
     print(f"Power-curve RMSE: {metrics['overall_curve_rmse']:.6f}")
+    print(
+        "Backward-spectrum RMSE at alpha=4.7: "
+        f"{metrics['selected_spectrum_rmse_db']['4.7']['backward']:.6f} dB"
+    )
+    print(
+        "Precursor backward-comb log10 RMSE: "
+        f"{metrics['precursor_backward_comb_log10_rmse']:.6f}"
+    )
     print(
         "Quantitative verdict: "
         + ("CLOSE" if metrics["close_to_paper"] else "NOT WITHIN ALL LIMITS")

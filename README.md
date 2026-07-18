@@ -350,17 +350,49 @@ The paper specifies $K=4.5$ for Fig. 1d/S1, in contrast with the $K=3$
 Fig. 1e/S2 configuration above. It does not publish every S1 simulation input
 or the detuning-scan protocol. The standalone reconstruction therefore labels
 the following choices as inferred rather than reported: $F=2.0$, $R=0.90$, the
-two scan rates, and the deterministic random-noise seed used to access the
-subcritical soliton branch. It uses literal equation phase $\phi=\pi$, which
-is the paper's constructive device phase after the derived phase relabeling.
+two scan rates, and both stochastic perturbations. It uses literal equation
+phase $\phi=\pi$, which is the paper's constructive device phase after the
+derived phase relabeling.
+
+An exactly homogeneous initial field remains homogeneous under the published
+deterministic LLE, so a noiseless reconstruction has exactly zero non-pump
+power at $\alpha=4.7$. The published simulation instead contains weak
+precursor sidebands. The default reconstruction applies a weak Gaussian modal
+Wiener drive during only the pre-soliton scan, with normalized strength
+$3\times10^{-5}$ per square root of normalized time, modal width 3, and cutoff
+$\mu\in\{-19,\ldots,19\}$. The drive is explicitly an inferred symmetry-breaking
+model, not a method reported by the authors, and it is disabled before the
+localized branch is followed. Scalar noise in $F(t)$ is not used because the
+paper's $\delta_{\mu0}F$ drive excites only the pump mode and cannot break the
+azimuthal symmetry of an exactly homogeneous state.
+
+At $\alpha=4.8$, a one-time Gaussian modal seed with RMS amplitude 0.02 and
+modal width 19 accesses the subcritical soliton branch. Its normalized Fourier
+amplitudes are independent of the spatial grid. This replaces the former
+point-space kick, whose modal strength changed with the number of grid points.
+Both perturbations and their random seeds are written to the metrics report and
+can be varied from the command line.
 
 At the default 256-point resolution, comparison with the official simulated
 source arrays gives backward CE 0.6685 versus 0.6741 at $\alpha=6.98$,
 remaining pump 0.0553 versus 0.0360, collapse detuning 7.5859 versus 7.5600,
-an overall power-trace RMSE of 0.0453, and a 0.909 correlation for the backward
-spectral-evolution map. The selected backward-spectrum median RMSE is 13.3 dB;
-most of that difference is in weak spectral wings. This is a standalone
-quantitative audit, not an additional unit test.
+an overall power-trace RMSE of 0.0470, and spectral-map correlations of 0.716
+forward and 0.931 backward. The selected backward-spectrum median RMSE is
+13.3 dB; most of that difference is in weak spectral wings. At $\alpha=4.7$,
+the backward-spectrum RMSE falls from the noiseless 53.8 dB to 29.8 dB, and
+the precursor backward-comb log-power RMSE falls from 4.80 to 1.98 decades.
+The remaining mismatch is reported rather than hidden by a stronger fitted
+noise floor. This is a standalone quantitative audit, not an additional unit
+test.
+
+The 256- and 512-point runs agree to numerical roundoff at fixed time step.
+Halving the time step leaves formation and collapse unchanged and changes the
+$\alpha=6.98$ CE by $3.1\times10^{-5}$; an individual stochastic precursor
+snapshot changes by a few decibels, as expected, while its distribution is
+time-step independent. After holding the $\alpha=6.98$ state for 100 normalized
+time units, its CE has relative variation $6.2\times10^{-15}$. Steady-state
+refinement then gives a maximum continuous-equation residual of
+$8.9\times10^{-14}$.
 
 The numerical pieces are intentionally separate:
 
@@ -371,6 +403,8 @@ The numerical pieces are intentionally separate:
 - `bidirectional_spectrum.py` applies the circuit scattering relations and
   reports both port spectra, conversion efficiency, pump consumption, and the
   steady power budget.
+- `stochastic.py` defines grid-normalized Gaussian modal seeds and Wiener
+  increments shared by the scan protocol and the bidirectional solver.
 - `integration.py`, `spectral.py`, and `spectrum.time_average` are shared by
   the scalar and bidirectional solvers.
 
@@ -428,6 +462,9 @@ Exact benchmarks:
   energy conservation, the red split-mode phase derivation, the high-efficiency
   contrast after relabeling the plotted phase axis by $\pi$, and the common
   translation orbit of the localized steady state.
+- Complex Gaussian modal increments have the prescribed Wiener variance and
+  Gaussian envelope, while both continuous increments and one-time modal
+  seeds retain identical normalized Fourier amplitudes under grid refinement.
 
 Asymptotic consistency check:
 
