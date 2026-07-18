@@ -11,9 +11,11 @@ from pathlib import Path
 import numpy as np
 
 from dispersion import DispersionRelation
+from drift import estimate_drift
 from lle_solver import single_soliton_seed, solve_lle, stationary_residual
 from physics import HBAR_J_S, load_solver_physics
 from spectrum import output_spectrum
+from steady_solver import solve_steady_state
 
 
 def polynomial_dispersion(beta_2, beta_3=0.0):
@@ -54,6 +56,9 @@ class ExtendedLLEPhysicsBenchmarks(unittest.TestCase):
         sideband_power_variation = {}
         fixed_frame_change = {}
         fixed_frame_residual = {}
+        drift_diagnostics = {}
+        final_fields = {}
+        dispersions = {}
         for d_3 in (0.0, 0.15):
             beta_3 = -6.0 * d_3 * q**3
             dispersion = polynomial_dispersion(beta_2, beta_3)
@@ -93,6 +98,11 @@ class ExtendedLLEPhysicsBenchmarks(unittest.TestCase):
                     )
                 )
             )
+            drift_diagnostics[d_3] = estimate_drift(
+                times[times >= 40.0], late_fields
+            )
+            final_fields[d_3] = fields[-1]
+            dispersions[d_3] = dispersion
 
         # The second-order-only state has a strongly breathing spectrum.
         self.assertGreater(sideband_power_variation[0.0], 0.1)
@@ -109,6 +119,30 @@ class ExtendedLLEPhysicsBenchmarks(unittest.TestCase):
         # explicitly reports constant-velocity drift when TOD is present.
         self.assertGreater(fixed_frame_change[0.15], 0.1)
         self.assertGreater(fixed_frame_residual[0.15], 1.0)
+
+        # Aligning the TOD snapshots removes their evolution: the pulse center
+        # follows a straight line and the profile is steady in that frame.
+        tod_drift = drift_diagnostics[0.15]
+        self.assertTrue(tod_drift.is_rigid_translation)
+        self.assertGreater(abs(tod_drift.velocity), 0.1)
+        self.assertLess(tod_drift.fit_rms, 5.0e-4)
+        self.assertLess(tod_drift.shape_variation, 5.0e-3)
+        self.assertFalse(drift_diagnostics[0.0].is_rigid_translation)
+
+        # The steady solver must automatically augment the equation for odd
+        # dispersion and refine the time-integrated profile together with v.
+        moving_solution, velocity, residual, _ = solve_steady_state(
+            final_fields[0.15],
+            alpha,
+            forcing,
+            dispersions[0.15],
+            tolerance=1.0e-9,
+            max_iterations=100,
+            initial_velocity=tod_drift.velocity,
+        )
+        self.assertLess(residual, 1.0e-9)
+        self.assertLess(abs(velocity / tod_drift.velocity - 1.0), 2.0e-3)
+        self.assertGreater(np.max(np.abs(moving_solution)), 1.0)
 
     def test_si_normalization_and_through_port_input_output_relation(self):
         """Check dimensional LLE scaling and critical-coupling extinction."""
@@ -224,6 +258,36 @@ class ExtendedLLEPhysicsBenchmarks(unittest.TestCase):
         self.assertAlmostEqual(
             saved["output_frequency_thz"][sideband_index],
             sideband_omega / (2.0 * np.pi * 1.0e12),
+            places=13,
+        )
+
+        # A relative equilibrium with normalized angular velocity v has
+        # f_rep=FSR+kappa*v/(4*pi). Modal powers are unchanged, but the
+        # physical comb-frequency axis must use this repetition rate.
+        drift_velocity = 0.4
+        drifting_saved = output_spectrum(
+            field,
+            physics=physics,
+            drift_velocity=drift_velocity,
+        )["saved"]
+        expected_shift_hz = kappa * drift_velocity / (4.0 * np.pi)
+        self.assertAlmostEqual(
+            drifting_saved["repetition_rate_shift_hz"],
+            expected_shift_hz,
+            places=7,
+        )
+        self.assertAlmostEqual(
+            drifting_saved["effective_repetition_rate_hz"],
+            fsr_hz + expected_shift_hz,
+            places=7,
+        )
+        expected_drifting_sideband_hz = (
+            omega_pump / (2.0 * np.pi)
+            + sideband_mode * (fsr_hz + expected_shift_hz)
+        )
+        self.assertAlmostEqual(
+            drifting_saved["output_frequency_thz"][sideband_index],
+            expected_drifting_sideband_hz / 1.0e12,
             places=13,
         )
 

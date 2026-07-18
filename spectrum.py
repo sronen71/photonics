@@ -23,13 +23,21 @@ def _time_average(values, times):
     return np.sum(trapezoids * intervals[:, None], axis=0) / np.sum(intervals)
 
 
-def output_spectrum(fields, physics=None, times=None):
-    """Return a steady or time-averaged normalized/physical output spectrum."""
+def output_spectrum(fields, physics=None, times=None, drift_velocity=0.0):
+    """Return a steady or time-averaged normalized/physical output spectrum.
+
+    ``drift_velocity`` is d(theta_center)/d(normalized_time).  For SI input it
+    corrects the comb repetition rate while leaving the cold-cavity FSR saved
+    separately.
+    """
     fields = np.asarray(fields)
     if fields.ndim == 1:
         fields = fields[None, :]
     if fields.ndim != 2 or fields.shape[1] < 2:
         raise ValueError("spectrum fields must have shape (times, spatial_points)")
+    drift_velocity = float(drift_velocity)
+    if not np.isfinite(drift_velocity):
+        raise ValueError("spectrum drift velocity must be finite")
 
     spatial_points = fields.shape[1]
     mode_number = np.fft.fftshift(
@@ -57,6 +65,7 @@ def output_spectrum(fields, physics=None, times=None):
                 "output_normalized_power": normalized_power,
                 "output_normalized_power_db": power_db,
                 "output_spectrum_units": "normalized",
+                "spectrum_drift_velocity_normalized": drift_velocity,
             },
         }
 
@@ -70,9 +79,19 @@ def output_spectrum(fields, physics=None, times=None):
     )
     output_wave[:, pump_index] += input_wave
 
+    repetition_rate_shift_hz = (
+        physics.kappa_rad_s * drift_velocity / (4.0 * np.pi)
+    )
+    effective_repetition_rate_hz = (
+        physics.fsr_hz + repetition_rate_shift_hz
+    )
+    if effective_repetition_rate_hz <= 0.0:
+        raise ValueError(
+            "drift correction gives a nonpositive repetition rate"
+        )
     optical_omega = (
         physics.omega_pump_rad_s
-        + 2.0 * np.pi * physics.fsr_hz * mode_number
+        + 2.0 * np.pi * effective_repetition_rate_hz * mode_number
     )
     if np.any(optical_omega <= 0.0):
         raise ValueError(
@@ -95,7 +114,11 @@ def output_spectrum(fields, physics=None, times=None):
         "power_db": output_power_dbm,
         "axis_label": "Optical frequency (THz)",
         "power_label": "Through-port output power (dBm)",
-        "title": "Physical output spectrum",
+        "title": (
+            "Physical output spectrum"
+            if drift_velocity == 0.0
+            else "Physical output spectrum (drift-corrected frequencies)"
+        ),
         "saved": {
             "output_frequency_thz": optical_frequency_thz,
             "output_power_w": output_power_w,
@@ -105,6 +128,9 @@ def output_spectrum(fields, physics=None, times=None):
             "kappa_external_rad_s": physics.kappa_external_rad_s,
             "omega_pump_rad_s": physics.omega_pump_rad_s,
             "fsr_hz": physics.fsr_hz,
+            "spectrum_drift_velocity_normalized": drift_velocity,
+            "repetition_rate_shift_hz": repetition_rate_shift_hz,
+            "effective_repetition_rate_hz": effective_repetition_rate_hz,
             "g_0_rad_s": physics.g_0_rad_s,
             "pump_power_w": physics.pump_power_w,
         },

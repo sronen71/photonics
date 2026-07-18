@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Find a stationary Lugiato--Lefever state on a ring.
+"""Find a steady Lugiato--Lefever state on a ring.
 
-The stationary equation is
+For even modal dispersion the stationary equation is
 
     0 = -(1+i*alpha)A + i|A|^2 A
         + i*D(-i*d/dtheta)A + F,
 
 with A(theta + 2*pi) = A(theta).
+
+When dispersion has an odd part, the solver instead finds the relative
+equilibrium A(theta, t)=U(theta-v*t) and its unknown velocity v.
 """
 
 from pathlib import Path
@@ -15,7 +18,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.optimize import NoConvergence, newton_krylov
+from scipy.linalg import circulant
+from scipy.optimize import NoConvergence, newton_krylov, root
 
 from config_loader import (
     ConfigurationError,
@@ -23,6 +27,7 @@ from config_loader import (
     load_section,
 )
 from dispersion import as_dispersion, soliton_seed_beta
+from drift import estimate_drift, spectral_derivative
 from physics import load_solver_physics, normalized_summary
 from spectrum import output_spectrum
 
@@ -32,6 +37,8 @@ CONFIGURATION_KEYS = {
     "spatial_points",
     "tolerance",
     "max_iterations",
+    "relaxation_time",
+    "relaxation_dt",
 }
 
 
@@ -91,6 +98,43 @@ def stationary_residual(
     )
 
 
+def moving_frame_residual(
+    amplitude,
+    velocity,
+    alpha,
+    forcing,
+    beta,
+    mode_number,
+    modal_dispersion=None,
+):
+    """Return the residual for A(theta,t)=U(theta-velocity*t)."""
+    return stationary_residual(
+        amplitude,
+        alpha,
+        forcing,
+        beta,
+        mode_number,
+        modal_dispersion=modal_dispersion,
+    ) + velocity * spectral_derivative(amplitude)
+
+
+def dispersion_is_even(mode_number, modal_dispersion):
+    """Return whether represented positive and negative modes have equal D."""
+    modal_dispersion = np.asarray(modal_dispersion, dtype=float)
+    mode_number = np.asarray(mode_number)
+    represented = {
+        int(round(mode)): value
+        for mode, value in zip(mode_number, modal_dispersion)
+    }
+    differences = [
+        abs(value - represented[-mode])
+        for mode, value in represented.items()
+        if -mode in represented
+    ]
+    scale = max(1.0, float(np.max(np.abs(modal_dispersion))))
+    return max(differences, default=0.0) <= 1.0e-12 * scale
+
+
 def pack(amplitude):
     """Convert a complex field into a real vector for SciPy."""
     return np.concatenate((amplitude.real, amplitude.imag))
@@ -102,10 +146,10 @@ def unpack(vector):
     return vector[:spatial_points] + 1j * vector[spatial_points:]
 
 
-def solve_stationary(
+def _solve_fixed_frame(
     initial_guess, alpha, forcing, beta, tolerance, max_iterations
 ):
-    """Refine an initial field with a matrix-free Newton--Krylov solver."""
+    """Solve the v=0 equation after reflection symmetry has been verified."""
     spatial_points = initial_guess.size
     angular_step = 2.0 * np.pi / spatial_points
     mode_number = 2.0 * np.pi * np.fft.fftfreq(
@@ -176,6 +220,162 @@ def solve_stationary(
     return solution, maximum_residual, iteration_count
 
 
+def _pack_moving(amplitude, velocity):
+    """Pack a complex field and one real velocity into a real vector."""
+    return np.concatenate((amplitude.real, amplitude.imag, [velocity]))
+
+
+def _unpack_moving(vector):
+    """Unpack a complex field and real velocity from a real vector."""
+    spatial_points = (vector.size - 1) // 2
+    amplitude = (
+        vector[:spatial_points]
+        + 1j * vector[spatial_points:2 * spatial_points]
+    )
+    return amplitude, float(vector[-1])
+
+
+def _solve_moving_frame(
+    initial_guess,
+    initial_velocity,
+    alpha,
+    forcing,
+    beta,
+    tolerance,
+    max_iterations,
+):
+    """Solve for a relative equilibrium and its translation velocity."""
+    spatial_points = initial_guess.size
+    mode_number = np.fft.fftfreq(spatial_points, d=1.0 / spatial_points)
+    modal_dispersion = as_dispersion(beta).values(mode_number)
+    reference = np.asarray(initial_guess, dtype=complex).copy()
+    reference_derivative = spectral_derivative(reference)
+    derivative_norm = float(np.sqrt(np.mean(np.abs(reference_derivative) ** 2)))
+    if derivative_norm <= np.finfo(float).eps:
+        raise ValueError(
+            "a moving-frame solve requires a nonuniform initial field"
+        )
+    phase_direction = reference_derivative / derivative_norm
+
+    spectral_linear_operator = (
+        -(1.0 + 1j * alpha) + 1j * modal_dispersion
+    )
+    linear_matrix = circulant(np.fft.ifft(spectral_linear_operator))
+    derivative_matrix = circulant(np.fft.ifft(1j * mode_number))
+    diagonal = np.diag_indices(spatial_points)
+
+    def real_residual(vector):
+        amplitude, velocity = _unpack_moving(vector)
+        residual = moving_frame_residual(
+            amplitude,
+            velocity,
+            alpha,
+            forcing,
+            beta,
+            mode_number,
+            modal_dispersion=modal_dispersion,
+        )
+        phase_condition = float(np.real(np.vdot(
+            phase_direction, amplitude - reference
+        )) / spatial_points)
+        return np.concatenate((
+            residual.real,
+            residual.imag,
+            [phase_condition],
+        ))
+
+    def real_jacobian(vector):
+        amplitude, velocity = _unpack_moving(vector)
+        direct = linear_matrix + velocity * derivative_matrix
+        direct = direct.copy()
+        direct[diagonal] += 2j * np.abs(amplitude) ** 2
+        conjugate = np.diag(1j * amplitude**2)
+        direct_plus = direct + conjugate
+        direct_minus = direct - conjugate
+
+        size = 2 * spatial_points + 1
+        jacobian = np.empty((size, size), dtype=float)
+        jacobian[:spatial_points, :spatial_points] = direct_plus.real
+        jacobian[:spatial_points, spatial_points:-1] = -direct_minus.imag
+        jacobian[spatial_points:-1, :spatial_points] = direct_plus.imag
+        jacobian[spatial_points:-1, spatial_points:-1] = direct_minus.real
+
+        amplitude_derivative = spectral_derivative(amplitude)
+        jacobian[:spatial_points, -1] = amplitude_derivative.real
+        jacobian[spatial_points:-1, -1] = amplitude_derivative.imag
+        jacobian[-1, :spatial_points] = (
+            phase_direction.real / spatial_points
+        )
+        jacobian[-1, spatial_points:-1] = (
+            phase_direction.imag / spatial_points
+        )
+        jacobian[-1, -1] = 0.0
+        return jacobian
+
+    result = root(
+        real_residual,
+        _pack_moving(initial_guess, initial_velocity),
+        jac=real_jacobian,
+        method="hybr",
+        options={
+            "xtol": max(1.0e-12, tolerance * 0.1),
+            "maxfev": max_iterations,
+        },
+    )
+    solution, velocity = _unpack_moving(result.x)
+    residual = moving_frame_residual(
+        solution,
+        velocity,
+        alpha,
+        forcing,
+        beta,
+        mode_number,
+        modal_dispersion=modal_dispersion,
+    )
+    maximum_residual = float(np.max(np.abs(residual)))
+    if maximum_residual > tolerance:
+        raise RuntimeError(
+            "moving-frame Newton solve did not converge after "
+            f"{result.nfev} residual evaluations; "
+            f"maximum residual={maximum_residual:.3e}; {result.message}"
+        )
+    return solution, velocity, maximum_residual, int(result.nfev)
+
+
+def solve_steady_state(
+    initial_guess,
+    alpha,
+    forcing,
+    beta,
+    tolerance,
+    max_iterations,
+    initial_velocity=0.0,
+):
+    """Solve in the fixed frame for even D(k), otherwise solve for v."""
+    spatial_points = initial_guess.size
+    mode_number = np.fft.fftfreq(spatial_points, d=1.0 / spatial_points)
+    modal_dispersion = as_dispersion(beta).values(mode_number)
+    if dispersion_is_even(mode_number, modal_dispersion):
+        solution, residual, iterations = _solve_fixed_frame(
+            initial_guess,
+            alpha,
+            forcing,
+            beta,
+            tolerance,
+            max_iterations,
+        )
+        return solution, 0.0, residual, iterations
+    return _solve_moving_frame(
+        initial_guess,
+        initial_velocity,
+        alpha,
+        forcing,
+        beta,
+        tolerance,
+        max_iterations,
+    )
+
+
 def save_results(
     theta,
     amplitude,
@@ -184,9 +384,10 @@ def save_results(
     beta,
     residual,
     iterations,
+    velocity=0.0,
     physics=None,
 ):
-    """Save the stationary field, magnitude profile, and mode amplitudes."""
+    """Save the co-moving steady field, drift, and mode amplitudes."""
     dispersion_relation = as_dispersion(beta)
     RESULTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
     intensity = np.abs(amplitude) ** 2
@@ -201,7 +402,9 @@ def save_results(
     dispersion_values = np.fft.fftshift(
         dispersion_relation.values(unshifted_mode_number)
     )
-    plotted_output = output_spectrum(amplitude, physics)
+    plotted_output = output_spectrum(
+        amplitude, physics, drift_velocity=velocity
+    )
 
     saved_results = dict(
         theta=theta,
@@ -226,6 +429,7 @@ def save_results(
         dispersion=dispersion_values,
         maximum_residual=residual,
         newton_iterations=iterations,
+        drift_velocity_normalized=velocity,
     )
     saved_results.update(plotted_output["saved"])
     np.savez(RESULTS_DIRECTORY / "steady_solution.npz", **saved_results)
@@ -246,7 +450,7 @@ def save_results(
     profile_axis.set_xlim(0.0, 2.0 * np.pi)
     profile_axis.set_xlabel(r"Azimuthal angle $\theta$")
     profile_axis.set_ylabel(r"$A(\theta)$")
-    profile_axis.set_title("Nonuniform stationary complex field around the ring")
+    profile_axis.set_title("Steady complex field in its co-moving frame")
     profile_axis.grid(alpha=0.25)
     profile_axis.legend()
 
@@ -254,7 +458,7 @@ def save_results(
     intensity_axis.set_xlim(0.0, 2.0 * np.pi)
     intensity_axis.set_xlabel(r"Azimuthal angle $\theta$")
     intensity_axis.set_ylabel(r"$|A(\theta)|^2$")
-    intensity_axis.set_title("Stationary intensity")
+    intensity_axis.set_title("Steady co-moving intensity")
     intensity_axis.grid(alpha=0.25)
 
     output_axis.scatter(
@@ -273,7 +477,8 @@ def save_results(
 
     figure.suptitle(
         rf"$\alpha={alpha:g}$, $F={forcing.real:g}$, "
-        f"{dispersion_relation.description}",
+        + rf"$v={velocity:.6g}$, "
+        + f"{dispersion_relation.description}",
         fontsize=13,
     )
     figure.tight_layout()
@@ -296,6 +501,8 @@ def main():
         )
         arguments.alpha = physics.alpha
         arguments.tolerance = float(arguments.tolerance)
+        arguments.relaxation_time = float(arguments.relaxation_time)
+        arguments.relaxation_dt = float(arguments.relaxation_dt)
         for name in ("spatial_points", "max_iterations"):
             setattr(arguments, name, int(getattr(arguments, name)))
     except (ConfigurationError, TypeError, ValueError) as error:
@@ -304,10 +511,12 @@ def main():
         arguments.spatial_points < 8
         or arguments.tolerance <= 0.0
         or arguments.max_iterations < 1
+        or arguments.relaxation_time <= 0.0
+        or arguments.relaxation_dt <= 0.0
     ):
         parser.error(
             "steady.spatial_points must be at least 8; tolerance and "
-            "max_iterations must be positive"
+            "all iteration and relaxation settings must be positive"
         )
 
     forcing = physics.forcing
@@ -331,18 +540,74 @@ def main():
         theta_grid, arguments.alpha, forcing, dispersion
     )
 
-    print("Solving stationary equation...", flush=True)
-    amplitude, residual, iterations = solve_stationary(
+    mode_number = np.fft.fftfreq(
+        arguments.spatial_points, d=1.0 / arguments.spatial_points
+    )
+    modal_dispersion = dispersion.values(mode_number)
+    initial_velocity = 0.0
+    if not dispersion_is_even(mode_number, modal_dispersion):
+        # A stable translating attractor supplies a close initial profile for
+        # the augmented Newton solve.  The Newton solve then removes the
+        # finite-time and split-step error to the requested tolerance.
+        from lle_solver import solve_lle
+
+        print(
+            "Odd dispersion detected; generating a moving-state initial guess...",
+            flush=True,
+        )
+        snapshots = max(51, min(
+            501,
+            int(np.ceil(arguments.relaxation_time / arguments.relaxation_dt))
+            + 1,
+        ))
+        _, relaxation_times, relaxation_fields = solve_lle(
+            alpha=arguments.alpha,
+            forcing=forcing,
+            beta=dispersion,
+            spatial_points=arguments.spatial_points,
+            final_time=arguments.relaxation_time,
+            time_step=arguments.relaxation_dt,
+            initial_noise=0.0,
+            snapshots=snapshots,
+            seed=0,
+            initial_background=initial_guess,
+        )
+        diagnostic_start = relaxation_times[-1] - min(
+            10.0, 0.5 * arguments.relaxation_time
+        )
+        diagnostic_indices = np.flatnonzero(
+            relaxation_times >= diagnostic_start
+        )
+        drift = estimate_drift(
+            relaxation_times[diagnostic_indices],
+            relaxation_fields[diagnostic_indices],
+        )
+        if not drift.is_rigid_translation:
+            raise RuntimeError(
+                "odd-dispersion relaxation did not approach a rigidly "
+                "translating state; try a different seed or parameters"
+            )
+        initial_guess = relaxation_fields[-1]
+        initial_velocity = drift.velocity
+        print(
+            f"Initial drift estimate v={initial_velocity:.6g}; "
+            f"aligned shape variation={drift.shape_variation:.3e}",
+            flush=True,
+        )
+
+    print("Solving steady equation in the symmetry-appropriate frame...", flush=True)
+    amplitude, velocity, residual, iterations = solve_steady_state(
         initial_guess,
         arguments.alpha,
         forcing,
         dispersion,
         arguments.tolerance,
         arguments.max_iterations,
+        initial_velocity=initial_velocity,
     )
     print(
-        f"Converged in {iterations} Newton--Krylov iterations; "
-        f"maximum residual={residual:.3e}",
+        f"Converged after {iterations} residual evaluations; "
+        f"v={velocity:.6g}; maximum moving-frame residual={residual:.3e}",
         flush=True,
     )
 
@@ -355,6 +620,7 @@ def main():
         dispersion,
         residual,
         iterations,
+        velocity=velocity,
         physics=physics,
     )
     print("Results saved.", flush=True)

@@ -21,6 +21,7 @@ from config_loader import (
     load_section,
 )
 from dispersion import as_dispersion, soliton_seed_beta
+from drift import estimate_drift, spectral_derivative
 from physics import load_solver_physics, normalized_summary
 from spectrum import output_spectrum
 
@@ -230,20 +231,51 @@ def stationary_residual(amplitude, alpha, forcing, beta):
     )
 
 
+def moving_frame_residual(amplitude, velocity, alpha, forcing, beta):
+    """Return the continuous-equation residual in a frame moving at v."""
+    return (
+        stationary_residual(amplitude, alpha, forcing, beta)
+        + velocity * spectral_derivative(amplitude)
+    )
+
+
+def late_time_drift(times, fields, analysis_time):
+    """Estimate translation over the final requested time interval."""
+    analysis_start = times[-1] - analysis_time
+    indices = np.flatnonzero(times >= analysis_start)
+    if indices.size < 3:
+        indices = np.arange(max(0, times.size - 3), times.size)
+    if indices.size < 3:
+        return indices, None
+    return indices, estimate_drift(times[indices], fields[indices])
+
+
 def save_figure(
     theta, times, fields, alpha: float, forcing: complex, beta: float,
     alpha_start=None, physics=None, spectrum_average_time=5.0,
+    drift=None,
 ) -> None:
     """Save the field evolution, final profile, and averaged output spectrum."""
     magnitude = np.abs(fields)
     final_field = fields[-1]
-    spectrum_start = times[-1] - spectrum_average_time
-    spectrum_indices = np.flatnonzero(times >= spectrum_start)
+    spectrum_indices, measured_drift = late_time_drift(
+        times, fields, spectrum_average_time
+    )
+    if drift is None:
+        drift = measured_drift
     if spectrum_indices.size < 2:
         spectrum_indices = np.arange(max(0, times.size - 2), times.size)
     spectrum_times = times[spectrum_indices]
+    spectrum_drift_velocity = (
+        drift.velocity
+        if drift is not None and drift.is_rigid_translation
+        else 0.0
+    )
     plotted_output = output_spectrum(
-        fields[spectrum_indices], physics=physics, times=spectrum_times
+        fields[spectrum_indices],
+        physics=physics,
+        times=spectrum_times,
+        drift_velocity=spectrum_drift_velocity,
     )
 
     figure = plt.figure(figsize=(10, 9))
@@ -304,10 +336,31 @@ def save_figure(
     figure.tight_layout()
     RESULTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
     spectrum_results = dict(plotted_output["saved"])
+    fixed_frame_maximum_residual = float(np.max(np.abs(
+        stationary_residual(final_field, alpha, forcing, beta)
+    )))
+    moving_frame_maximum_residual = (
+        float(np.max(np.abs(moving_frame_residual(
+            final_field,
+            spectrum_drift_velocity,
+            alpha,
+            forcing,
+            beta,
+        ))))
+        if drift is not None and drift.is_rigid_translation
+        else np.nan
+    )
     spectrum_results.update(
         spectrum_average_start=spectrum_times[0],
         spectrum_average_end=spectrum_times[-1],
+        final_fixed_frame_maximum_residual=fixed_frame_maximum_residual,
+        final_moving_frame_maximum_residual=moving_frame_maximum_residual,
+        spectrum_drift_correction_applied=(
+            drift is not None and drift.is_rigid_translation
+        ),
     )
+    if drift is not None:
+        spectrum_results.update(drift.saved_results())
     np.savez(
         RESULTS_DIRECTORY / "lle_output_spectrum.npz", **spectrum_results
     )
@@ -317,6 +370,7 @@ def save_figure(
         bbox_inches="tight",
     )
     plt.close(figure)
+    return drift
 
 
 def main() -> None:
@@ -418,10 +472,28 @@ def main() -> None:
     final_residual = float(np.max(np.abs(stationary_residual(
         fields[-1], arguments.alpha, forcing, dispersion
     ))))
+    _, drift = late_time_drift(
+        times, fields, arguments.spectrum_average_time
+    )
     if final_residual <= arguments.stationary_tolerance:
         print(
             "Final state is close to stationary: yes; "
             f"maximum residual={final_residual:.3e}",
+            flush=True,
+        )
+    elif drift is not None and drift.is_rigid_translation:
+        moving_residual = float(np.max(np.abs(moving_frame_residual(
+            fields[-1],
+            drift.velocity,
+            arguments.alpha,
+            forcing,
+            dispersion,
+        ))))
+        print(
+            "Final state is a rigidly translating steady profile; "
+            f"v={drift.velocity:.6g}; aligned shape variation="
+            f"{drift.shape_variation:.3e}; maximum moving-frame residual="
+            f"{moving_residual:.3e}",
             flush=True,
         )
     else:
@@ -442,6 +514,7 @@ def main() -> None:
         alpha_start=alpha_start,
         physics=physics,
         spectrum_average_time=arguments.spectrum_average_time,
+        drift=drift,
     )
     print("Figure saved.", flush=True)
 

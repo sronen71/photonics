@@ -137,12 +137,15 @@ always uses the complete CSV relation.
 
 An odd part of $D(k)$, such as third-order dispersion, breaks reflection
 symmetry and generally makes a localized state drift around the ring. The
-time-dependent solver represents that motion directly. The steady solver
-solves only the stationary equation in the selected co-rotating frame and
-does not solve for an unknown drift velocity. A drifting state can therefore
-have steady modal powers while its fixed-frame stationary residual remains
-large. A linear term in $D(k)$ selects a different co-rotating frame when that
-frame velocity is known.
+time-dependent solver represents that motion directly and measures its late-
+time velocity. The steady solver checks the parity of $D(k)$ automatically.
+For even dispersion it solves the simpler $v=0$ stationary equation. For odd
+dispersion it solves
+$R[U]+v\,\partial_\theta U=0$ for both the co-moving profile $U$ and velocity
+$v$, with a phase condition fixing the arbitrary pulse position. A short
+time integration supplies a stable moving-state seed before Newton refinement;
+its duration and step are set by `steady.relaxation_time` and
+`steady.relaxation_dt`.
 
 ### Physical parameters
 
@@ -211,29 +214,34 @@ time. The default interval is the final 5 normalized time units. SI and
 normalized axes use the same conventions as the steady solver, and the data
 are saved to `results/lle_output_spectrum.npz`.
 
-After integration, the solver also evaluates the stationary LLE residual of
-the final field. It reports whether the maximum residual satisfies
-`lle.stationary_tolerance`; this report does not stop a valid time-dependent
-solution that remains nonstationary.
+After integration, the solver evaluates the fixed-frame LLE residual and fits
+translation over the spectrum-averaging window. It distinguishes a stationary
+field from a rigidly translating profile and saves the fitted velocity,
+linearity error, aligned-profile variation, and moving-frame residual.
 
-Find a stationary bright soliton (`steady` section):
+Find a steady bright soliton in its automatically selected frame (`steady`
+section):
 
 ```bash
 python3 steady_solver.py
 ```
 
-The steady-state figure includes the complex field, spatial intensity, and an
-output spectrum. With `physics.units: SI`, the spectrum panel shows
+The steady-state figure includes the co-moving complex field, spatial
+intensity, drift velocity, and an output spectrum. With `physics.units: SI`,
+the spectrum panel shows
 through-port power in dBm versus optical frequency in THz. It includes
 interference between the input pump and cavity leakage at the pumped mode;
 sidebands contain cavity leakage only. With `physics.units: normalized`, it
 instead shows normalized spectral power in dB versus mode number.
 
-The SI frequency labels use the nominal grid
-$\omega_p+2\pi\,\mathrm{FSR}\,k$. This is exact for a stationary comb in that
-co-rotating frame. For a drifting or breathing state, the saved values are
-time-averaged modal powers rather than a slow-time-resolved optical spectrum;
-the code does not infer repetition-rate shifts or resolve breathing sidebands.
+For a stationary comb, SI frequency labels use the nominal grid
+$\omega_p+2\pi\,\mathrm{FSR}\,k$. For a rigidly drifting comb, the measured
+normalized velocity gives
+$\delta f_{\rm rep}=\kappa v/(4\pi)$, and the labels instead use
+$\omega_p+2\pi(\mathrm{FSR}+\delta f_{\rm rep})k$. Modal powers do not change
+under rigid translation. Breathing and chaotic states retain the nominal axis
+and a time-averaged power envelope; slow-time modulation sidebands are not
+resolved.
 
 `results/steady_solution.npz` stores the underlying spectrum. SI results use
 `output_frequency_thz`, `output_power_w`, and `output_power_dbm`; normalized
@@ -281,12 +289,14 @@ Exact benchmarks:
   nonzero first comb sideband.
 - The third-order-dispersion stabilization reported by Parra-Rivas et al. at
   `theta=6.1`, `u0=4`, and `d3=0.15`. The test distinguishes a steady comb
-  spectrum in a moving frame from a stationary field, and verifies that the
-  corresponding `d3=0` soliton breathes strongly.
+  spectrum in a moving frame from a stationary field, verifies constant drift,
+  refines the profile and velocity to a moving-frame root, and verifies that
+  the corresponding `d3=0` soliton breathes strongly.
 - The dimensional normalization and through-port input-output relation. At
   critical coupling, a Kerr-shifted resonant continuous wave must cancel the
   incident pump at the through port, while a sideband has the expected
-  out-coupled photon flux and optical frequency.
+  out-coupled photon flux and optical frequency. A separate check verifies the
+  drift-induced repetition-rate correction.
 - The exact finite-window average power of a freely decaying cavity mode,
   which checks the time-averaged spectrum calculation.
 

@@ -50,3 +50,5 @@ steady:
   spatial_points: 512
   tolerance: 1.0e-9
   max_iterations: 1000
+  relaxation_time: 50.0
+  relaxation_dt: 0.005

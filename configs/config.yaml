@@ -50,3 +50,7 @@ steady:
   spatial_points: 512
   tolerance: 1.0e-9
   max_iterations: 1000
+  # Used automatically to initialize a moving-frame solve when D(k) has an
+  # odd part. Purely even dispersion goes directly to the v=0 solve.
+  relaxation_time: 50.0
+  relaxation_dt: 0.005
