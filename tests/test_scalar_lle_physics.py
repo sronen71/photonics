@@ -124,29 +124,37 @@ class ScalarLLEPhysicsBenchmarks(unittest.TestCase):
 
         spatial_points = 32
         mode = 3
-        beta = -0.3
         amplitude = 1.0e-6
         theta = 2.0 * np.pi * np.arange(spatial_points) / spatial_points
         initial_mode = amplitude * np.exp(1j * mode * theta)
         final_time = 1.1
-        _, _, fields = solve_lle(
-            alpha=alpha,
-            forcing=0.0,
-            beta=beta,
-            spatial_points=spatial_points,
-            final_time=final_time,
-            time_step=0.05,
-            initial_noise=0.0,
-            snapshots=2,
-            seed=0,
-            initial_background=initial_mode,
-        )
-        numerical_mode = np.fft.fft(fields[-1])[mode] / spatial_points
-        mode_generator = (
-            -(1.0 + 1j * alpha) + 0.5j * beta * mode**2
-        )
-        exact_mode = amplitude * np.exp(mode_generator * final_time)
-        self.assertLess(abs(numerical_mode - exact_mode) / abs(exact_mode), 1e-8)
+        for beta in (-0.3, 0.3):
+            with self.subTest(beta=beta):
+                _, _, fields = solve_lle(
+                    alpha=alpha,
+                    forcing=0.0,
+                    beta=beta,
+                    spatial_points=spatial_points,
+                    final_time=final_time,
+                    time_step=0.05,
+                    initial_noise=0.0,
+                    snapshots=2,
+                    seed=0,
+                    initial_background=initial_mode,
+                )
+                numerical_mode = (
+                    np.fft.fft(fields[-1])[mode] / spatial_points
+                )
+                mode_generator = (
+                    -(1.0 + 1j * alpha) + 0.5j * beta * mode**2
+                )
+                exact_mode = amplitude * np.exp(
+                    mode_generator * final_time
+                )
+                relative_error = abs(numerical_mode - exact_mode) / abs(
+                    exact_mode
+                )
+                self.assertLess(relative_error, 1e-8)
 
     def test_modulational_instability_gain_of_mode_eight(self):
         """Reproduce the analytic MI gain for the Godey et al. example."""
@@ -243,6 +251,75 @@ class ScalarLLEPhysicsBenchmarks(unittest.TestCase):
             pattern_intensity > pattern_intensity.mean()
         )
         self.assertEqual(int(np.sum(significant_peaks)), mode)
+
+    def test_normal_dispersion_dark_soliton_of_godey_et_al(self):
+        """Reproduce the stable normal-GVD dark soliton in Godey Fig. 4."""
+        # Godey et al., Phys. Rev. A 89, 063814 (2014), Figs. 4 and 5:
+        # alpha=2.5, beta=+0.0125, and F^2=2.61 support a stable dark
+        # cavity soliton between the upper and lower homogeneous states.
+        alpha = 2.5
+        beta = 0.0125
+        forcing = np.sqrt(2.61)
+        spatial_points = 256
+        theta = 2.0 * np.pi * np.arange(spatial_points) / spatial_points
+        distance = (theta + np.pi) % (2.0 * np.pi) - np.pi
+        lower, middle, upper = uniform_states(alpha, forcing)
+
+        # A smooth lower-state domain within the upper state supplies the
+        # pulse-like perturbation used to select the dark-soliton basin.
+        notch_width = 0.4
+        edge_width = 0.06
+        lower_state_window = 0.5 * (
+            np.tanh((distance + 0.5 * notch_width) / edge_width)
+            - np.tanh((distance - 0.5 * notch_width) / edge_width)
+        )
+        initial_field = upper + (lower - upper) * lower_state_window
+
+        _, _, fields = solve_lle(
+            alpha=alpha,
+            forcing=forcing,
+            beta=beta,
+            spatial_points=spatial_points,
+            final_time=50.0,
+            time_step=0.01,
+            initial_noise=0.0,
+            snapshots=6,
+            seed=0,
+            initial_background=initial_field,
+        )
+        final_field = fields[-1]
+        intensity = abs(final_field) ** 2
+        lower_intensity = abs(lower) ** 2
+        middle_intensity = abs(middle) ** 2
+        upper_intensity = abs(upper) ** 2
+
+        # The published solution is a single localized intensity hole whose
+        # background approaches the upper CW state and whose minimum lies
+        # between the lower and intermediate CW intensities.
+        self.assertLess(
+            abs(intensity.max() / upper_intensity - 1.0), 5.0e-4
+        )
+        self.assertGreater(intensity.min(), lower_intensity)
+        self.assertLess(intensity.min(), middle_intensity)
+        self.assertGreater(np.ptp(intensity), 1.5)
+
+        local_minimum = (intensity < np.roll(intensity, 1)) & (
+            intensity < np.roll(intensity, -1)
+        )
+        significant_minimum = local_minimum & (
+            intensity < middle_intensity
+        )
+        self.assertEqual(int(np.sum(significant_minimum)), 1)
+
+        # A single dark pulse has a one-FSR comb: the first sideband must be
+        # present rather than the field having relaxed to a flat CW solution.
+        spectrum = abs(np.fft.fft(final_field)) / spatial_points
+        self.assertGreater(spectrum[1] / spectrum[0], 0.05)
+
+        late_time_drift = np.linalg.norm(fields[-1] - fields[-2]) / (
+            np.linalg.norm(final_field)
+        )
+        self.assertLess(late_time_drift, 1.0e-6)
 
     def test_bright_soliton_asymptotics_and_stationarity(self):
         """Check large-detuning sech asymptotics and LLE stationarity."""

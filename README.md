@@ -86,11 +86,16 @@ Exact benchmarks:
 - The homogeneous response
   `|F|^2 = I [1 + (alpha - I)^2]`, including the bistability cusp at
   `alpha = sqrt(3)` and its two fold points.
-- Exact small-signal cavity filling and ringdown, including the phase acquired
-  by a nonzero azimuthal mode from second-order dispersion.
+- Exact small-signal cavity filling and ringdown, including the opposite phase
+  shifts acquired by a nonzero azimuthal mode for normal and anomalous
+  second-order dispersion.
 - The modulational-instability gain of the `alpha=1`, `beta=-0.04`, `I=1.2`
-  example in Godey et al. The test seeds the unstable eigenvector at mode 8 and
-  measures its exponential growth rate.
+  anomalous-dispersion example in Godey et al. The test seeds the unstable
+  eigenvector at mode 8 and measures its exponential growth rate.
+- The stable normal-dispersion dark cavity soliton reported by Godey et al. at
+  `alpha=2.5`, `beta=+0.0125`, and `F^2=2.61`. A pulse-like perturbation must
+  relax to one stationary intensity dip on the upper CW background with a
+  nonzero first comb sideband.
 
 Asymptotic consistency check:
 
