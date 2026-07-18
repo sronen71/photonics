@@ -1,6 +1,7 @@
 """Shared YAML configuration loading for the LLE scripts."""
 
 import argparse
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +32,25 @@ PHYSICAL_PHYSICS_KEYS = {
 
 class ConfigurationError(ValueError):
     """Raised when a configuration file or section is invalid."""
+
+
+def finite_float(value, name):
+    """Return a finite float or raise a consistently worded config error."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ConfigurationError(f"{name} must be a number") from None
+    if not math.isfinite(number):
+        raise ConfigurationError(f"{name} must be finite")
+    return number
+
+
+def finite_integer(value, name):
+    """Return an exactly represented finite integer configuration value."""
+    number = finite_float(value, name)
+    if not number.is_integer():
+        raise ConfigurationError(f"{name} must be an integer")
+    return int(number)
 
 
 def config_parser(description: str) -> argparse.ArgumentParser:

@@ -1,0 +1,40 @@
+# Zang et al., Nature Photonics 19, 510--517 (2025), Fig. 1e / Fig. S2.
+# This repository keeps alpha=2*(omega_center-omega_pump)/kappa, so the
+# paper's positive plotted detunings are used directly.
+bidirectional_physics:
+  alpha: 6.98
+  # The supplement specifies F^2=4.41.
+  f_real: 2.1
+  # Physical D2 is converted with our beta=-2*D2/kappa convention and
+  # kappa=(1+K)*omega_center/Qi.
+  center_frequency_hz: 1.931e14
+  quality_factor_intrinsic: 2.7e6
+  d2_rad_s: -5.340707511102648e7
+  epsilon_phc: 6.0
+  coupling_factor: 3.0
+  # The measured devices span R=0.90 to 0.97. The high-efficiency Fig. S2
+  # benchmark is reproduced at the upper end of that reported range.
+  reflectivity: 0.97
+  reflector_phase: 0.0
+  # The paper defines phi relative to the fabricated PhCR but does not give
+  # that device phase in an absolute FFT field basis. This one-time reference
+  # maps its constructive phi=0 device onto our retained field convention.
+  reflector_phase_reference: 3.455751918948773
+  # The paper uses Omega={-19,-18,...,18,19}.
+  reflector_half_width: 19
+  fsr_hz: 2.0e11
+
+bidirectional_lle:
+  spatial_points: 256
+  final_time: 100.0
+  dt: 0.005
+  initial_noise: 0.001
+  snapshots: 501
+  seed: 7
+  operation_mode: scan
+  scan_alpha_start: 3.0
+  scan_time: 80.0
+  spectrum_average_time: 10.0
+  refine_steady_state: true
+  steady_tolerance: 1.0e-8
+  steady_max_iterations: 1000

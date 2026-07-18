@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from spectral import mode_numbers
+
 
 @dataclass(frozen=True)
 class DriftDiagnostics:
@@ -33,7 +35,7 @@ class DriftDiagnostics:
 def spectral_derivative(field):
     """Differentiate a complex periodic field with respect to ring angle."""
     field = np.asarray(field)
-    mode_number = np.fft.fftfreq(field.shape[-1], d=1.0 / field.shape[-1])
+    mode_number = mode_numbers(field.shape[-1])
     return np.fft.ifft(
         1j * mode_number * np.fft.fft(field, axis=-1), axis=-1
     )
@@ -51,7 +53,7 @@ def translate_fields(fields, shift):
         squeeze = False
     if fields.ndim != 2 or shift.shape != (fields.shape[0],):
         raise ValueError("fields and shifts must have compatible time axes")
-    mode_number = np.fft.fftfreq(fields.shape[1], d=1.0 / fields.shape[1])
+    mode_number = mode_numbers(fields.shape[1])
     translated = np.fft.ifft(
         np.fft.fft(fields, axis=1)
         * np.exp(1j * shift[:, None] * mode_number[None, :]),

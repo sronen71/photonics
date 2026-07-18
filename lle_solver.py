@@ -22,7 +22,9 @@ from config_loader import (
 )
 from dispersion import as_dispersion, soliton_seed_beta
 from drift import estimate_drift, spectral_derivative
+from integration import integrate_snapshots
 from physics import load_solver_physics, normalized_summary
+from spectral import mode_numbers
 from spectrum import output_spectrum
 
 
@@ -143,11 +145,7 @@ def solve_lle(
         )
 
     theta = np.linspace(0.0, 2.0 * np.pi, spatial_points, endpoint=False)
-    angular_step = 2.0 * np.pi / spatial_points
-    # Integer azimuthal mode numbers for a 2*pi-periodic ring.
-    mode_number = 2.0 * np.pi * np.fft.fftfreq(
-        spatial_points, d=angular_step
-    )
+    mode_number = mode_numbers(spatial_points)
     modal_dispersion = as_dispersion(beta).values(mode_number)
 
     half_linear_step, half_drive_step = linear_half_step_parameters(
@@ -168,15 +166,10 @@ def solve_lle(
         + 1j * rng.standard_normal(spatial_points)
     )
 
-    number_of_steps = int(np.ceil(final_time / time_step))
-    save_every = max(1, number_of_steps // max(1, snapshots - 1))
-    saved_times = [0.0]
-    saved_fields = [amplitude.copy()]
-
-    for index in range(number_of_steps):
-        step = min(time_step, final_time - index * time_step)
+    def advance(state, step_start, step):
+        (step_amplitude,) = state
         if alpha_schedule is not None:
-            step_alpha = alpha_schedule(index * time_step + 0.5 * step)
+            step_alpha = alpha_schedule(step_start + 0.5 * step)
             propagator, drive_increment = linear_half_step_parameters(
                 step_alpha,
                 forcing,
@@ -198,27 +191,27 @@ def solve_lle(
             propagator = half_linear_step
             drive_increment = half_drive_step
 
-        amplitude = split_step(
-            amplitude,
+        return (split_step(
+            step_amplitude,
             step,
             propagator,
             drive_increment,
-        )
+        ),)
 
-        if not np.all(np.isfinite(amplitude)):
-            raise RuntimeError("solution diverged; reduce lle.dt in the configuration")
-
-        if (index + 1) % save_every == 0 or index == number_of_steps - 1:
-            saved_times.append(min((index + 1) * time_step, final_time))
-            saved_fields.append(amplitude.copy())
-
-    return theta, np.asarray(saved_times), np.asarray(saved_fields)
+    saved_times, (saved_fields,) = integrate_snapshots(
+        (amplitude,),
+        final_time,
+        time_step,
+        snapshots,
+        advance,
+    )
+    return theta, saved_times, saved_fields
 
 
 def stationary_residual(amplitude, alpha, forcing, beta):
     """Return the stationary-LLE residual of one field snapshot."""
     spatial_points = amplitude.size
-    mode_number = np.fft.fftfreq(spatial_points, d=1.0 / spatial_points)
+    mode_number = mode_numbers(spatial_points)
     modal_dispersion = as_dispersion(beta).values(mode_number)
     dispersed_field = np.fft.ifft(
         modal_dispersion * np.fft.fft(amplitude)

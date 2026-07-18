@@ -26,9 +26,10 @@ from config_loader import (
     config_parser,
     load_section,
 )
-from dispersion import as_dispersion, soliton_seed_beta
+from dispersion import as_dispersion, dispersion_is_even, soliton_seed_beta
 from drift import estimate_drift, spectral_derivative
 from physics import load_solver_physics, normalized_summary
+from spectral import mode_numbers
 from spectrum import output_spectrum
 
 
@@ -118,23 +119,6 @@ def moving_frame_residual(
     ) + velocity * spectral_derivative(amplitude)
 
 
-def dispersion_is_even(mode_number, modal_dispersion):
-    """Return whether represented positive and negative modes have equal D."""
-    modal_dispersion = np.asarray(modal_dispersion, dtype=float)
-    mode_number = np.asarray(mode_number)
-    represented = {
-        int(round(mode)): value
-        for mode, value in zip(mode_number, modal_dispersion)
-    }
-    differences = [
-        abs(value - represented[-mode])
-        for mode, value in represented.items()
-        if -mode in represented
-    ]
-    scale = max(1.0, float(np.max(np.abs(modal_dispersion))))
-    return max(differences, default=0.0) <= 1.0e-12 * scale
-
-
 def pack(amplitude):
     """Convert a complex field into a real vector for SciPy."""
     return np.concatenate((amplitude.real, amplitude.imag))
@@ -151,10 +135,7 @@ def _solve_fixed_frame(
 ):
     """Solve the v=0 equation after reflection symmetry has been verified."""
     spatial_points = initial_guess.size
-    angular_step = 2.0 * np.pi / spatial_points
-    mode_number = 2.0 * np.pi * np.fft.fftfreq(
-        spatial_points, d=angular_step
-    )
+    mode_number = mode_numbers(spatial_points)
     modal_dispersion = as_dispersion(beta).values(mode_number)
 
     def real_residual(vector):
@@ -246,7 +227,7 @@ def _solve_moving_frame(
 ):
     """Solve for a relative equilibrium and its translation velocity."""
     spatial_points = initial_guess.size
-    mode_number = np.fft.fftfreq(spatial_points, d=1.0 / spatial_points)
+    mode_number = mode_numbers(spatial_points)
     modal_dispersion = as_dispersion(beta).values(mode_number)
     reference = np.asarray(initial_guess, dtype=complex).copy()
     reference_derivative = spectral_derivative(reference)
@@ -353,9 +334,8 @@ def solve_steady_state(
 ):
     """Solve in the fixed frame for even D(k), otherwise solve for v."""
     spatial_points = initial_guess.size
-    mode_number = np.fft.fftfreq(spatial_points, d=1.0 / spatial_points)
-    modal_dispersion = as_dispersion(beta).values(mode_number)
-    if dispersion_is_even(mode_number, modal_dispersion):
+    mode_number = mode_numbers(spatial_points)
+    if dispersion_is_even(beta, mode_number):
         solution, residual, iterations = _solve_fixed_frame(
             initial_guess,
             alpha,
@@ -392,13 +372,11 @@ def save_results(
     RESULTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
     intensity = np.abs(amplitude) ** 2
     magnitude = np.abs(amplitude)
-    mode_number = np.fft.fftshift(
-        np.fft.fftfreq(theta.size, d=1.0 / theta.size)
-    )
+    mode_number = np.fft.fftshift(mode_numbers(theta.size))
     mode_power = (
         np.abs(np.fft.fftshift(np.fft.fft(amplitude))) ** 2 / theta.size**2
     )
-    unshifted_mode_number = np.fft.fftfreq(theta.size, d=1.0 / theta.size)
+    unshifted_mode_number = mode_numbers(theta.size)
     dispersion_values = np.fft.fftshift(
         dispersion_relation.values(unshifted_mode_number)
     )
@@ -540,12 +518,10 @@ def main():
         theta_grid, arguments.alpha, forcing, dispersion
     )
 
-    mode_number = np.fft.fftfreq(
-        arguments.spatial_points, d=1.0 / arguments.spatial_points
-    )
+    mode_number = mode_numbers(arguments.spatial_points)
     modal_dispersion = dispersion.values(mode_number)
     initial_velocity = 0.0
-    if not dispersion_is_even(mode_number, modal_dispersion):
+    if not dispersion_is_even(dispersion, mode_number):
         # A stable translating attractor supplies a close initial profile for
         # the augmented Newton solve.  The Newton solve then removes the
         # finite-time and split-step error to the requested tolerance.

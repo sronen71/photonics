@@ -261,9 +261,78 @@ In the LLE section, `initial_shape` selects `empty` or `soliton` independently
 of the `direct` or `scan` `operation_mode`. The steady solver always starts
 from the soliton seed before Newton--Krylov refinement.
 
+## Bidirectional PhCR circuit
+
+`bidirectional_solver.py` implements the coupled forward/backward model used
+by Zang et al. for a photonic-crystal resonator (PhCR) followed by a finite-band
+waveguide reflector. In this repository's modal-dispersion notation, the model
+is
+
+$$
+\dot E^f_\mu=-(1+i\alpha)E^f_\mu+iD(\mu)E^f_\mu
++i\mathcal F(|E^f|^2E^f)_\mu+2iP_bE^f_\mu
++\delta_{\mu0}\left(F-\frac{i\epsilon_{\rm PhC}}2E^b_0\right),
+$$
+
+$$
+\dot E^b_\mu=-(1+i\alpha)E^b_\mu+iD(\mu)E^b_\mu
++i\mathcal F(|E^b|^2E^b)_\mu+2iP_fE^b_\mu
++\delta_{\mu0}\left(rF-\frac{i\epsilon_{\rm PhC}}2E^f_0\right)
+-I_\Omega(\mu)\gamma rE^f_\mu,
+$$
+
+where $P_{f,b}=\sum_j|E^{f,b}_j|^2$,
+$\gamma=2K/(K+1)$, and $I_\Omega$ restricts reflection to the configured
+mode band. The reflector coefficient is
+$r=\sqrt R\exp[i(\phi+\phi_{\rm ref})]$. Keeping the phase reference separate
+makes the mapping between a fabricated device's PhCR-relative phase and the
+FFT field basis explicit.
+
+The implementation keeps this repository's sign conventions. Positive
+$\alpha=2(\omega_0-\omega_p)/\kappa$ is red pump detuning, and
+$D(\mu)=\beta_2\mu^2/2=-d_2\mu^2/2$, so a dimensional coefficient is converted
+with $\beta_2=-2D_2/\kappa$. This matches the displayed evolution equation and
+positive-detuning scans in the paper while avoiding the opposite detuning sign
+printed in its prose definition.
+
+Run the paper benchmark configuration with
+
+```bash
+python3 bidirectional_solver.py
+```
+
+The default starts from noise, scans to $\alpha=6.98$, time-averages the two
+external-port spectra, and refines the final state with the even-dispersion
+Newton--Krylov solver. It reproduces a stable, predominantly backward comb with
+about 0.62 pump-to-comb conversion efficiency and about 0.01 remaining pump
+power. Shifting the physical reflector phase by $\pi$ suppresses conversion by
+more than a factor of 20 in the regression benchmark. The configured
+$R=0.97$ is the upper end of the paper's reported measured range, and
+`reflector_phase_reference` records the single constant phase calibration used
+to map the paper's constructive $\phi=0$ device to this field basis.
+
+The numerical pieces are intentionally separate:
+
+- `bidirectional.py` contains only the coupled residual and exact split-step
+  subflows.
+- `bidirectional_steady.py` refines the paper's even-$D_2$, $v=0$ state.
+- `bidirectional_spectrum.py` applies the circuit scattering relations and
+  reports both port spectra, conversion efficiency, pump consumption, and the
+  steady power budget.
+- `integration.py`, `spectral.py`, and `spectrum.time_average` are shared by
+  the scalar and bidirectional solvers.
+
+The runner saves the dynamic histories, the refined steady fields, both port
+spectra, power-flow traces, and residuals in
+`results/bidirectional_lle_output.npz`; its summary figure is
+`results/bidirectional_lle_response.png`. The steady refiner deliberately uses
+$v=0$ after verifying even dispersion. A future bidirectional odd-dispersion
+extension would need one shared drift velocity and a translation phase
+condition, as the scalar traveling-state solver already does.
+
 ## Physics validation
 
-Run the scalar-LLE physics benchmarks with
+Run all physics benchmarks with
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -299,6 +368,11 @@ Exact benchmarks:
   drift-induced repetition-rate correction.
 - The exact finite-window average power of a freely decaying cavity mode,
   which checks the time-averaged spectrum calculation.
+- The bidirectional PhCR model of Zang et al.: dimensional-dispersion sign
+  conversion, reduction to the scalar LLE when coupling is disabled, exact
+  modal reflector propagation, factor-two cross-phase modulation, steady port
+  energy conservation, and the high-efficiency constructive/destructive phase
+  contrast of Figs. 1e and S2.
 
 Asymptotic consistency check:
 
@@ -328,3 +402,6 @@ are indexed in [docs/LLE_REFERENCES.md](docs/LLE_REFERENCES.md).
 - P. Parra-Rivas et al., [Third-order chromatic dispersion stabilizes Kerr
   frequency combs](https://doi.org/10.1364/OL.39.002971), Opt. Lett. 39,
   2971 (2014).
+- J. Zang et al., [Laser power consumption of soliton formation in a
+  bidirectional Kerr resonator](https://doi.org/10.1038/s41566-025-01624-1),
+  Nature Photonics 19, 510--517 (2025).

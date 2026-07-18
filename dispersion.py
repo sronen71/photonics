@@ -208,3 +208,20 @@ def soliton_seed_beta(relation):
             "analytic soliton seed"
         )
     return relation.seed_beta
+
+
+def dispersion_is_even(relation, mode_number, tolerance=1.0e-12):
+    """Return whether represented positive and negative modes have equal D."""
+    mode_number = np.asarray(mode_number)
+    values = as_dispersion(relation).values(mode_number)
+    represented = {
+        int(round(mode)): value
+        for mode, value in zip(mode_number, values)
+    }
+    differences = [
+        abs(value - represented[-mode])
+        for mode, value in represented.items()
+        if -mode in represented
+    ]
+    scale = max(1.0, float(np.max(np.abs(values))))
+    return max(differences, default=0.0) <= tolerance * scale
