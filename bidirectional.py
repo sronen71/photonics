@@ -225,8 +225,16 @@ def solve_bidirectional_lle(
     initial_forward=0.0j,
     initial_backward=0.0j,
     alpha_schedule=None,
+    modal_noise=None,
+    initial_modal_seed=None,
 ):
-    """Integrate the bidirectional LLE with exact split subflows."""
+    """Integrate the bidirectional LLE with exact split subflows.
+
+    If supplied, ``initial_modal_seed`` samples one grid-normalized modal
+    seed, while ``modal_noise`` contributes additive Itô field increments
+    after each deterministic step.  They use the interfaces implemented by
+    ``GaussianModalSeed`` and ``GaussianModalWienerNoise``.
+    """
     if spatial_points < 8 or final_time <= 0.0 or time_step <= 0.0:
         raise ValueError("spatial points and times must be positive")
     if initial_noise < 0.0:
@@ -251,6 +259,14 @@ def solve_bidirectional_lle(
             rng.standard_normal(spatial_points)
             + 1j * rng.standard_normal(spatial_points)
         )
+    if initial_modal_seed is not None:
+        modal_samples = initial_modal_seed.field_samples(
+            rng,
+            modes,
+            number_of_fields=2,
+        )
+        forward += modal_samples[0]
+        backward += modal_samples[1]
 
     constant_half_step = linear_step_parameters(
         parameters,
@@ -277,7 +293,19 @@ def solve_bidirectional_lle(
             )
         else:
             linear_half_step = constant_half_step
-        return split_step(*state, step_size, linear_half_step)
+        next_forward, next_backward = split_step(
+            *state, step_size, linear_half_step
+        )
+        if modal_noise is not None:
+            increments = modal_noise.field_increments(
+                rng,
+                modes,
+                step_size,
+                number_of_fields=2,
+            )
+            next_forward += increments[0]
+            next_backward += increments[1]
+        return next_forward, next_backward
 
     times, (forward_fields, backward_fields) = integrate_snapshots(
         (forward, backward),
