@@ -37,6 +37,100 @@ def unpack_fields(vector):
     return forward, backward
 
 
+def _uniform_candidate(
+    initial_forward,
+    initial_backward,
+    parameters,
+    tolerance,
+    max_iterations,
+):
+    """Refine the two complex amplitudes of a homogeneous state."""
+    initial_vector = np.array(
+        [
+            complex(initial_forward).real,
+            complex(initial_forward).imag,
+            complex(initial_backward).real,
+            complex(initial_backward).imag,
+        ],
+        dtype=float,
+    )
+
+    def real_residual(vector):
+        forward = vector[0] + 1j * vector[1]
+        backward = vector[2] + 1j * vector[3]
+        # Two equal collocation values contain only the pump mode.  Calling
+        # the physical residual here keeps this reduced solve exactly aligned
+        # with the full bidirectional equation, including reflector feedback.
+        residuals = bidirectional_residual(
+            np.full(2, forward, dtype=complex),
+            np.full(2, backward, dtype=complex),
+            parameters,
+        )
+        return np.array(
+            [
+                residuals[0][0].real,
+                residuals[0][0].imag,
+                residuals[1][0].real,
+                residuals[1][0].imag,
+            ]
+        )
+
+    result = root(
+        real_residual,
+        initial_vector,
+        method="lm",
+        options={
+            "ftol": max(1.0e-14, tolerance * 0.1),
+            "xtol": max(1.0e-14, tolerance * 0.1),
+            "gtol": max(1.0e-14, tolerance * 0.1),
+            "maxiter": max_iterations,
+        },
+    )
+    vector = np.asarray(result.x)
+    residual = real_residual(vector)
+    physical_residual = max(
+        abs(residual[0] + 1j * residual[1]),
+        abs(residual[2] + 1j * residual[3]),
+    )
+    return (
+        vector[0] + 1j * vector[1],
+        vector[2] + 1j * vector[3],
+        float(physical_residual),
+        int(result.nfev),
+    )
+
+
+def solve_bidirectional_uniform_state(
+    initial_forward,
+    initial_backward,
+    parameters,
+    tolerance=1.0e-9,
+    max_iterations=1000,
+):
+    """Solve the four real equations for a homogeneous bidirectional state."""
+    initial_values = np.asarray(
+        [initial_forward, initial_backward], dtype=complex
+    )
+    if initial_values.shape != (2,) or not np.all(np.isfinite(initial_values)):
+        raise ValueError("initial uniform fields must be two finite scalars")
+    if tolerance <= 0.0 or max_iterations < 1:
+        raise ValueError("steady tolerance and iteration limit must be positive")
+    result = _uniform_candidate(
+        initial_values[0],
+        initial_values[1],
+        parameters,
+        tolerance,
+        max_iterations,
+    )
+    if result[2] > tolerance:
+        raise RuntimeError(
+            "bidirectional uniform solve did not converge after "
+            f"{result[3]} nonlinear-solver steps; "
+            f"maximum residual={result[2]:.3e}"
+        )
+    return result
+
+
 def _newton_candidate(real_residual, initial_vector, tolerance, max_iterations):
     """Return the best Newton--Krylov candidate and iteration count."""
     iteration_count = 0
@@ -72,21 +166,20 @@ def _solve_uniform_state(
     max_iterations,
 ):
     """Refine a translation-invariant state, which has no shift null mode."""
-    def real_residual(vector):
-        forward, backward = unpack_fields(vector)
-        return pack_fields(*bidirectional_residual(
-            forward, backward, parameters
-        ))
-
-    vector, iterations = _newton_candidate(
-        real_residual,
-        pack_fields(initial_forward, initial_backward),
-        tolerance,
-        max_iterations,
+    forward_value, backward_value, maximum_residual, iterations = (
+        _uniform_candidate(
+            np.mean(initial_forward),
+            np.mean(initial_backward),
+            parameters,
+            tolerance,
+            max_iterations,
+        )
     )
-    forward, backward = unpack_fields(vector)
-    _, maximum_residual = _maximum_physical_residual(
-        forward, backward, parameters
+    forward = np.full(
+        initial_forward.shape, forward_value, dtype=complex
+    )
+    backward = np.full(
+        initial_backward.shape, backward_value, dtype=complex
     )
     return forward, backward, maximum_residual, iterations
 
