@@ -78,3 +78,35 @@ This fixes the modal phase convention independently of the soliton benchmark.
 The 2025 paper plots its constructive device-relative phase as zero while
 retaining the same equation signs and $r=\sqrt R\exp(i\phi)$, so its plotted
 phase axis is shifted by $\pi$ relative to the literal equation phase.
+
+## Liu et al. (2025), solitons in photonic-crystal resonators
+
+- Author manuscript: [arXiv:2508.13393v1](https://arxiv.org/abs/2508.13393v1)
+- Benchmark: the normal-dispersion primary-comb threshold from Eq. (4) and
+  Fig. 4 for $F=3$ and pump-mode splitting $\Gamma=9.3$
+- Reproduction: the counter-propagating CW intensity reaches its normalized
+  threshold of one at $\alpha=5.58$, compared with the paper's quoted
+  $\alpha\simeq5.5$
+
+The threshold depends on the homogeneous pump fields and not on the magnitude
+of $D_2$. The later nonlinear evolution and spectral bandwidth are not used as
+quantitative benchmarks because the manuscript does not specify that magnitude
+for the plotted simulation.
+
+## Sakaue and Kuse (2026), coupled-LLE analysis of PhCR solitons
+
+- Open-access article: [Opt. Express 34, 22095](https://doi.org/10.1364/OE.599771)
+- Benchmarks: the direction-resolved modulation-instability gain in Fig. 3 and
+  the effective-LLE soliton existence boundaries in Fig. 6
+- Reproduction: for $F^2=6$, $\Gamma=4$, and $d_2=0.02$, the unstable forward
+  sidebands peak at $|\mu|=20$ with normalized gain 0.586; for $\Gamma=6.75$,
+  the calculated forward interval is $[3.86,9.63]$ and the backward interval
+  is $[2.18,6.36]$
+
+Both papers couple only the forward and backward pump modes. In this repository
+that limit is represented by zero external reflectivity and
+`epsilon_phc` $=\Gamma$. The coupling sign differs by the harmless global phase
+choice $E_b\mapsto-E_b$, while intensities, MI gains, and existence boundaries
+are unchanged. Sakaue and Kuse use positive $d_2$ for anomalous dispersion;
+with this repository's retained dispersion convention their case is
+`beta = -d_2`.
