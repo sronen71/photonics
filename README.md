@@ -98,8 +98,9 @@ physics:
   dispersion_csv: dispersion.csv
 ```
 
-The path is resolved relative to the YAML file. The CSV header selects one of
-two representations.
+The path is resolved relative to the YAML file. Headered CSV files select one
+of two direct dispersion representations; SI configurations can also use the
+headerless pyLLE resonance format described below.
 
 For a polynomial, use `order,beta` rows:
 
@@ -189,6 +190,28 @@ This defines $D_{\rm int}(k)=\sum_n D_nk^n/n!$. A physical grid keeps the
 same `k,dispersion` header described above, but its `dispersion` values are
 dimensional $D_{\rm int}(k)$ in rad/s. Do not include the FSR term in either
 CSV representation. Relative CSV paths are resolved beside the YAML file.
+
+The SI configuration also accepts pyLLE's headerless resonance-file format
+through the same `dispersion_csv` setting:
+
+```csv
+210,190785936704274.4
+211,190885932958774.4
+212,190985931710274.4
+213,191085932958774.4
+214,191185936704274.4
+```
+
+The first column is the absolute integer azimuthal mode order and the second
+is its resonance frequency in Hz. The row nearest `omega_0_rad_s/(2*pi)` is
+the pumped mode. As in pyLLE, the co-rotating-grid frequency $D_1/(2\pi)$ is
+the linear coefficient of a quadratic fit to that mode and the two adjacent
+modes on each side. The loader then computes
+$D_{\rm int}(k)=2\pi[f_m-f_{m_0}-kD_1/(2\pi)]$ and applies the usual
+$D(k)=-2D_{\rm int}(k)/\kappa$ normalization. Consequently, the file must
+include those five consecutive modes, and its mode range must cover every FFT
+mode in the simulation. Unlike pyLLE, this loader does not spline-extrapolate
+beyond the supplied resonance data.
 
 The `lle` times (`dt`, `final_time`, `scan_time`, and
 `spectrum_average_time`) remain normalized times. For `physics.units: SI`,

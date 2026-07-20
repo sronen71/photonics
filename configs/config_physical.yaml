@@ -28,7 +28,8 @@ physics:
   pump_power_w: 0.0211
 
   # Quadratic integrated-dispersion coefficient D_2 in rad/s. Replace this
-  # with dispersion_csv for polynomial or gridded physical dispersion.
+  # with dispersion_csv for polynomial or gridded physical dispersion, or for
+  # a headerless pyLLE mode-order,resonance-frequency file.
   d2_rad_s: 1.0e7
 
 lle:
