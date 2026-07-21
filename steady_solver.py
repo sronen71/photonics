@@ -221,6 +221,46 @@ def _unpack_moving(vector):
     return amplitude, float(vector[-1])
 
 
+def pack_phase_conditioned_state(amplitude, velocity=0.0):
+    """Public representation for continuation of localized scalar states."""
+    return _pack_moving(np.asarray(amplitude, dtype=complex), velocity)
+
+
+def unpack_phase_conditioned_state(vector):
+    """Unpack a localized scalar state and its translation-border velocity."""
+    return _unpack_moving(np.asarray(vector, dtype=float))
+
+
+def scalar_phase_conditioned_residual(
+    vector,
+    alpha,
+    forcing,
+    beta,
+    reference,
+    phase_direction,
+):
+    """Return a square scalar-LLE residual with translation removed.
+
+    This is the continuation adapter for localized scalar states.  The final
+    unknown is the physical moving-frame velocity for odd dispersion and an
+    auxiliary zero-valued shift rate for an even-dispersion equilibrium.
+    """
+    amplitude, velocity = unpack_phase_conditioned_state(vector)
+    modes = mode_numbers(amplitude.size)
+    residual = moving_frame_residual(
+        amplitude,
+        velocity,
+        alpha,
+        forcing,
+        beta,
+        modes,
+    )
+    phase_condition = translation_phase_condition(
+        amplitude, reference, phase_direction
+    )
+    return np.concatenate((pack(residual), [phase_condition]))
+
+
 def _solve_moving_frame(
     initial_guess,
     initial_velocity,
