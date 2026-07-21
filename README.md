@@ -284,6 +284,47 @@ In the LLE section, `initial_shape` selects `empty` or `soliton` independently
 of the `direct` or `scan` `operation_mode`. The steady solver always starts
 from the soliton seed before Newton--Krylov refinement.
 
+## Comb plus homogeneous auxiliary mode
+
+`two_mode.py` implements the coupled equations in Appendix A of Liu et al.
+(2025). It evolves one dispersive comb field $A(\theta,t)$ and one homogeneous
+auxiliary amplitude $B(t)$. In normalized form,
+
+$$
+\dot A=-(1+i\alpha_1)A+iD A
++i(|A|^2+r^2|B|^2)A+C_{12}B+F_1,
+$$
+
+$$
+\dot B=-(\gamma+i\alpha_2)B
++i\left(|B|^2+r^2\sum_\mu|A_\mu|^2\right)B+C_{21}A_0+F_2.
+$$
+
+Here $A_0=\operatorname{mean}(A)$ and
+$\sum_\mu|A_\mu|^2=\operatorname{mean}(|A|^2)$ under the implemented FFT
+normalization. The auxiliary variable is deliberately a scalar: the paper's
+homogeneous-mode assumption excludes auxiliary comb generation and therefore
+removes its dispersion term. `TwoModeParameters.from_physical` maps the
+dimensional linewidths, detunings, coupling, pump power, and integrated
+dispersion directly into the repository convention. `solve_two_mode_lle`
+provides time integration, while `solve_two_mode_steady_state` removes the
+localized comb's neutral translation mode during steady refinement.
+
+## Pseudo-arclength continuation
+
+`continuation.py` provides adaptive, one-parameter pseudo-arclength
+continuation for any square real residual. It uses two seed-based
+fixed-parameter solves, a weighted secant predictor, a matrix-free bordered
+Newton corrector, retry with step reduction, and step growth after easy
+corrections. Unlike ordinary detuning stepping, the continued parameter is an
+unknown, so a branch can turn around at a saddle-node.
+
+Public phase-conditioned residual adapters are available for localized scalar,
+two-mode, and bidirectional states. They remove the neutral translation mode
+without putting model physics into the continuation engine. See
+[`docs/CONTINUATION.md`](docs/CONTINUATION.md) for the normalization,
+algorithm, and complete usage examples.
+
 ## Bidirectional PhCR circuit
 
 `bidirectional_solver.py` implements the coupled forward/backward model used
@@ -454,6 +495,12 @@ large-detuning asymptotic checks.
 
 Exact benchmarks:
 
+- Liu's two-mode normalization, shared-bus and intracavity coupling phases,
+  Parseval reduction of $\sum_\mu|A_\mu|^2$, exact linear and Kerr subflows,
+  and recovery of the full Appendix A vector field in the small-step limit.
+- Pseudo-arclength traversal of the exact saddle-node
+  $x^2-\lambda=0$, including parameter reversal, plus direct continuation of
+  the repository's scalar-LLE residual.
 - The homogeneous response
   `|F|^2 = I [1 + (alpha - I)^2]`, including the bistability cusp at
   `alpha = sqrt(3)` and its two fold points.

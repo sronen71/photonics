@@ -195,6 +195,42 @@ def _unpack_phase_conditioned(vector):
     return forward, backward, float(vector[-1])
 
 
+def pack_phase_conditioned_fields(forward, backward, shift_rate=0.0):
+    """Public representation for continuation of localized coupled fields."""
+    return _pack_phase_conditioned(forward, backward, shift_rate)
+
+
+def unpack_phase_conditioned_fields(vector):
+    """Unpack two localized fields and their common translation border."""
+    return _unpack_phase_conditioned(np.asarray(vector, dtype=float))
+
+
+def bidirectional_phase_conditioned_residual(
+    vector,
+    parameters,
+    reference,
+    phase_direction,
+):
+    """Return a square coupled-field residual with common translation removed."""
+    forward, backward, shift_rate = unpack_phase_conditioned_fields(vector)
+    residuals = bidirectional_residual(forward, backward, parameters)
+    derivatives = (
+        spectral_derivative(forward),
+        spectral_derivative(backward),
+    )
+    bordered_residuals = tuple(
+        residual + shift_rate * derivative
+        for residual, derivative in zip(residuals, derivatives)
+    )
+    phase_condition = translation_phase_condition(
+        np.stack((forward, backward)), reference, phase_direction
+    )
+    return np.concatenate((
+        pack_fields(*bordered_residuals),
+        [phase_condition],
+    ))
+
+
 def _place_real_linear_block(
     jacobian,
     row_real,
@@ -242,23 +278,12 @@ def _solve_localized_state(
     diagonal = np.diag_indices(spatial_points)
 
     def real_residual(vector):
-        forward, backward, shift_rate = _unpack_phase_conditioned(vector)
-        residuals = bidirectional_residual(forward, backward, parameters)
-        derivatives = (
-            spectral_derivative(forward),
-            spectral_derivative(backward),
+        return bidirectional_phase_conditioned_residual(
+            vector,
+            parameters,
+            reference,
+            phase_direction,
         )
-        bordered_residuals = tuple(
-            residual + shift_rate * derivative
-            for residual, derivative in zip(residuals, derivatives)
-        )
-        phase_condition = translation_phase_condition(
-            np.stack((forward, backward)), reference, phase_direction
-        )
-        return np.concatenate((
-            pack_fields(*bordered_residuals),
-            [phase_condition],
-        ))
 
     def real_jacobian(vector):
         forward, backward, shift_rate = _unpack_phase_conditioned(vector)
