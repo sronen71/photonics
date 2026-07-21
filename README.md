@@ -357,7 +357,7 @@ Run the detuning scan used to reconstruct all three panels of Supplementary
 Fig. S1 with
 
 ```bash
-python3 reproduce_figure_s1.py
+python3 reproduce/reproduce_figure_s1.py
 ```
 
 The script uses the same bidirectional LLE and circuit input-output functions
